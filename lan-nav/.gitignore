@@ -1,0 +1,11 @@
+.venv/
+.env
+data/navigation.yml
+data/navigation.yml.bak
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
+*.egg-info/
+dist/
+build/

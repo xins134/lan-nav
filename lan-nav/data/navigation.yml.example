@@ -1,0 +1,208 @@
+site:
+  title: 我的局域网导航
+  subtitle: 常用服务与工具
+  theme: system
+categories:
+- id: a1000000-0000-4000-8000-000000000001
+  name: 家庭服务
+  description: 媒体、存储与自动化
+  icon: house
+  color: '#8b5cf6'
+  order: 10
+- id: a1000000-0000-4000-8000-000000000002
+  name: 开发工具
+  description: 代码、文档与调试
+  icon: code-2
+  color: '#06b6d4'
+  order: 20
+- id: a1000000-0000-4000-8000-000000000003
+  name: 网络设备
+  description: 路由、交换机与监控
+  icon: router
+  color: '#10b981'
+  order: 30
+- id: a1000000-0000-4000-8000-000000000004
+  name: 娱乐休闲
+  description: 影音与个人站点
+  icon: clapperboard
+  color: '#f59e0b'
+  order: 40
+- id: 00000000-0000-4000-8000-000000000000
+  name: 未分类
+  description: 尚未归类的链接
+  icon: inbox
+  color: '#64748b'
+  order: 9999
+links:
+- id: b2000000-0000-4000-8000-000000000001
+  category_id: a1000000-0000-4000-8000-000000000001
+  title: NAS
+  url: http://192.168.1.10:5000
+  description: 家庭存储与文件管理
+  tags:
+  - 存储
+  - 家庭
+  icon_url: ''
+  icon: hard-drive
+  color: '#6366f1'
+  pinned: true
+  status: normal
+  order: 10
+- id: b2000000-0000-4000-8000-000000000002
+  category_id: a1000000-0000-4000-8000-000000000001
+  title: Home Assistant
+  url: http://192.168.1.20:8123
+  description: 智能家居控制中心
+  tags:
+  - 自动化
+  - IoT
+  icon_url: ''
+  icon: home
+  color: '#18bcf2'
+  pinned: true
+  status: normal
+  order: 20
+- id: b2000000-0000-4000-8000-000000000003
+  category_id: a1000000-0000-4000-8000-000000000001
+  title: 打印机
+  url: http://192.168.1.30
+  description: 局域网打印机管理页
+  tags:
+  - 打印
+  icon_url: ''
+  icon: printer
+  color: '#a78bfa'
+  pinned: false
+  status: normal
+  order: 30
+- id: b2000000-0000-4000-8000-000000000004
+  category_id: a1000000-0000-4000-8000-000000000002
+  title: GitLab
+  url: http://192.168.1.40:8080
+  description: 私有代码仓库
+  tags:
+  - Git
+  - CI
+  icon_url: ''
+  icon: git-branch
+  color: '#fc6d26'
+  pinned: true
+  status: normal
+  order: 10
+- id: b2000000-0000-4000-8000-000000000005
+  category_id: a1000000-0000-4000-8000-000000000002
+  title: 文档站
+  url: http://192.168.1.40:3000
+  description: 团队内部 Wiki
+  tags:
+  - 文档
+  icon_url: ''
+  icon: book-open
+  color: '#3b82f6'
+  pinned: false
+  status: normal
+  order: 20
+- id: b2000000-0000-4000-8000-000000000006
+  category_id: a1000000-0000-4000-8000-000000000002
+  title: Portainer
+  url: http://192.168.1.50:9000
+  description: 容器管理面板
+  tags:
+  - Docker
+  icon_url: ''
+  icon: container
+  color: '#0ea5e9'
+  pinned: false
+  status: normal
+  order: 30
+- id: b2000000-0000-4000-8000-000000000007
+  category_id: a1000000-0000-4000-8000-000000000002
+  title: API 调试
+  url: http://192.168.1.40:9090
+  description: 本地接口调试工具
+  tags:
+  - API
+  icon_url: ''
+  icon: terminal
+  color: '#22c55e'
+  pinned: false
+  status: warning
+  order: 40
+- id: b2000000-0000-4000-8000-000000000008
+  category_id: a1000000-0000-4000-8000-000000000003
+  title: 主路由
+  url: http://192.168.1.1
+  description: 网关与 Wi-Fi 管理
+  tags:
+  - 网络
+  icon_url: ''
+  icon: wifi
+  color: '#14b8a6'
+  pinned: true
+  status: normal
+  order: 10
+- id: b2000000-0000-4000-8000-000000000009
+  category_id: a1000000-0000-4000-8000-000000000003
+  title: 交换机
+  url: http://192.168.1.2
+  description: 核心交换管理
+  tags:
+  - 网络
+  icon_url: ''
+  icon: network
+  color: '#84cc16'
+  pinned: false
+  status: normal
+  order: 20
+- id: b2000000-0000-4000-8000-00000000000a
+  category_id: a1000000-0000-4000-8000-000000000003
+  title: 流量监控
+  url: http://192.168.1.3:3001
+  description: 带宽与设备流量
+  tags:
+  - 监控
+  icon_url: ''
+  icon: activity
+  color: '#ef4444'
+  pinned: false
+  status: normal
+  order: 30
+- id: b2000000-0000-4000-8000-00000000000b
+  category_id: a1000000-0000-4000-8000-000000000004
+  title: Jellyfin
+  url: http://192.168.1.10:8096
+  description: 家庭影音库
+  tags:
+  - 影音
+  icon_url: ''
+  icon: film
+  color: '#aa5cc3'
+  pinned: false
+  status: normal
+  order: 10
+- id: b2000000-0000-4000-8000-00000000000c
+  category_id: a1000000-0000-4000-8000-000000000004
+  title: 音乐服务器
+  url: http://192.168.1.10:4533
+  description: 本地音乐流媒体
+  tags:
+  - 音乐
+  icon_url: ''
+  icon: music
+  color: '#ec4899'
+  pinned: false
+  status: normal
+  order: 20
+- id: b2000000-0000-4000-8000-00000000000d
+  category_id: a1000000-0000-4000-8000-000000000004
+  title: 个人博客
+  url: https://example.com
+  description: 对外博客站点
+  tags:
+  - 博客
+  icon_url: ''
+  icon: globe
+  color: '#64748b'
+  pinned: false
+  status: offline
+  order: 30

@@ -1,0 +1,19 @@
+[Unit]
+Description=lan-nav local network navigation
+After=network.target
+
+[Service]
+Type=simple
+User=lan-nav
+Group=lan-nav
+WorkingDirectory=/opt/lan-nav
+EnvironmentFile=/opt/lan-nav/.env
+ExecStart=/opt/lan-nav/.venv/bin/python /opt/lan-nav/run.py
+Restart=on-failure
+RestartSec=3
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
