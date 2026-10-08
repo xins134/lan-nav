@@ -29,6 +29,9 @@ class Settings:
         self.debug: bool = _bool(os.getenv("DEBUG"), default=False)
         self.tz: str = os.getenv("TZ", "Asia/Shanghai").strip() or "Asia/Shanghai"
 
+        # 访问密钥：为空表示不启用鉴权（保持旧的完全开放行为）
+        self.key: str = os.getenv("KEY", "").strip()
+
         data_file = os.getenv("DATA_FILE", "data/navigation.yml").strip()
         path = Path(data_file)
         self.data_file: Path = path if path.is_absolute() else (ROOT_DIR / path)

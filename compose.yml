@@ -11,6 +11,9 @@ services:
       PORT: "8090"
       DEBUG: "false"
       TZ: Asia/Shanghai
+      # 访问密钥：留空为不鉴权（所有人可编辑）；设置后未登录即访客模式（只读）。
+      # 可在本目录 .env 里写 KEY=xxx，或在此直接填值。
+      KEY: "${KEY:-}"
       DATA_FILE: /app/data/navigation.yml
       EXAMPLE_FILE: /app/navigation.yml.example
       # 精简运行时（见 run.py）：关闭访问日志、使用 asyncio + h11

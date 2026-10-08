@@ -9,6 +9,64 @@
   const SHAPE_KEY = "lan-nav-icon-shape";
   const SHAPE_OPTIONS = ["rounded", "circle"];
 
+  const KEY_STORAGE = "lan-nav-key";
+  const KEY_HEADER = "X-Nav-Key";
+
+  // 访客 / 登录状态：服务端未配置 KEY 时视为完全开放（兼容旧行为）
+  const auth = {
+    required: false, // 服务端是否配置了 KEY
+    authenticated: false, // 当前是否已通过密钥校验
+    mobile: false, // 手机端强制访客模式
+  };
+
+  function detectMobile() {
+    const ua = navigator.userAgent || "";
+    if (
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Windows Phone/i.test(
+        ua
+      )
+    ) {
+      return true;
+    }
+    // iPadOS 等以桌面 UA 呈现的设备：触控 + 粗指针 + 小屏
+    const coarse =
+      typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+    const touchPoints = navigator.maxTouchPoints || 0;
+    const smallScreen =
+      Math.min(window.screen.width || 0, window.screen.height || 0) <= 1100;
+    return coarse && touchPoints > 1 && smallScreen;
+  }
+
+  function readStoredKey() {
+    try {
+      return sessionStorage.getItem(KEY_STORAGE) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function storeKey(value) {
+    try {
+      if (value) sessionStorage.setItem(KEY_STORAGE, value);
+      else sessionStorage.removeItem(KEY_STORAGE);
+    } catch (_) {
+      /* 隐私模式下 storage 可能不可用，退化为仅当前会话内存态 */
+    }
+  }
+
+  // 当前请求应携带的密钥：手机端永不携带，退化为只读访客
+  function activeKey() {
+    if (auth.mobile) return "";
+    return auth.authenticated ? readStoredKey() : "";
+  }
+
+  // 是否可以执行任何写操作（新增 / 编辑 / 删除 / 排序 / 导入）
+  function canEdit() {
+    if (auth.mobile) return false;
+    if (!auth.required) return true;
+    return auth.authenticated;
+  }
+
   const state = {
     site: { title: "", subtitle: "", theme: "system" },
     categories: [],
@@ -119,6 +177,8 @@
     const opts = options || {};
     const headers = Object.assign({ Accept: "application/json" }, opts.headers || {});
     if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+    const key = activeKey();
+    if (key) headers[KEY_HEADER] = key;
     const res = await fetch(String(path || "").replace(/^\//, ""), {
       method: opts.method || "GET",
       headers,
@@ -639,6 +699,7 @@
 
   function setSortMode(active, opts) {
     const options = opts || {};
+    if (active && !canEdit()) return;
     sortMode = !!active;
     document.documentElement.classList.toggle("sort-mode", sortMode);
     if (!sortMode && dragCtx) endDrag();
@@ -660,19 +721,27 @@
   function collectOrder() {
     const sections = $$("#main > .category");
     const catIds = sections.map((sec) => sec.getAttribute("data-cat-id")).filter(Boolean);
+    // 分类内顺序（全局 order）：同一链接只在所属分类出现一次
     const linkIds = [];
+    const seen = new Set();
     sections.forEach((sec) => {
       $$(".link-card", sec).forEach((card) => {
         const id = card.getAttribute("data-link-id");
-        if (id) linkIds.push(id);
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        linkIds.push(id);
       });
     });
-    return { catIds, linkIds };
+    // 置顶区顺序（独立 pin_order），与分类顺序互不影响
+    const pinnedIds = $$("#pinnedGrid .link-card")
+      .map((card) => card.getAttribute("data-link-id"))
+      .filter(Boolean);
+    return { catIds, linkIds, pinnedIds };
   }
 
   async function saveSortOrder() {
     const btn = $("#btnSortToggle");
-    const { catIds, linkIds } = collectOrder();
+    const { catIds, linkIds, pinnedIds } = collectOrder();
     if (btn) btn.disabled = true;
     try {
       if (catIds.length > 1) {
@@ -680,6 +749,9 @@
       }
       if (linkIds.length > 1) {
         await api("/api/links/reorder", { method: "POST", body: { ids: linkIds } });
+      }
+      if (pinnedIds.length > 1) {
+        await api("/api/links/pin-reorder", { method: "POST", body: { ids: pinnedIds } });
       }
       await reload();
       setSortMode(false, { silent: true });
@@ -693,7 +765,7 @@
   }
 
   function beginDrag(e) {
-    if (!sortMode || dragCtx) return;
+    if (!sortMode || dragCtx || !canEdit()) return;
     if (e.pointerType === "mouse" && e.button !== 0) return;
 
     const target = e.target;
@@ -718,7 +790,6 @@
       kind = "link";
     }
     if (!el || !container || !container.children.length) return;
-    if (el.closest("#pinnedSection")) return;
 
     // 阻止 <a> 的原生 HTML5 拖拽，否则浏览器会在移动时转入 native drag，
     // 从而中断 pointermove，卡片无法排序（分组按钮不受影响）。
@@ -855,8 +926,10 @@
   }
 
   function renderLinkCard(link) {
+    const classes = ["link-card"];
+    if (link.pinned) classes.push("is-pinned-card");
     const handle = `<span class="drag-handle" data-drag="link" aria-hidden="true">${window.LucideIcons.svg("grip")}</span>`;
-    return `<a class="link-card" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" data-link-id="${escapeHtml(link.id)}" style="--card-accent:${escapeHtml(link.color || "#6366f1")}">
+    return `<a class="${classes.join(" ")}" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" data-link-id="${escapeHtml(link.id)}" style="--card-accent:${escapeHtml(link.color || "#6366f1")}">
       ${handle}
       <div class="link-top">${renderFav(link)}
         <div>
@@ -884,7 +957,7 @@
     const pinnedGrid = $("#pinnedGrid");
     if (pinned.length) {
       pinnedSection.classList.remove("hidden");
-      pinnedGrid.innerHTML = pinned.map(renderLinkCard).join("");
+      pinnedGrid.innerHTML = pinned.map((lk) => renderLinkCard(lk)).join("");
     } else {
       pinnedSection.classList.add("hidden");
       pinnedGrid.innerHTML = "";
@@ -953,10 +1026,11 @@
     } else {
       empty.classList.add("hidden");
     }
-    if (addWrap) addWrap.classList.toggle("hidden", !!state.query);
+    if (addWrap) addWrap.classList.toggle("hidden", !!state.query || !canEdit());
 
     hydrateIcons(document);
     bindFavfallbacks();
+    syncAuthUI();
   }
 
   function bindFavfallbacks() {
@@ -980,6 +1054,15 @@
     state.categories = data.categories;
     state.links = data.links;
     state.meta = data.meta || state.meta;
+    const meta = data.meta || {};
+    if (typeof meta.requires_key === "boolean") auth.required = meta.requires_key;
+    if (auth.mobile) {
+      // 手机端强制访客，忽略任何已存的密钥
+      auth.authenticated = false;
+    } else {
+      auth.authenticated = !!meta.authenticated;
+      if (!auth.authenticated) storeKey("");
+    }
     applyTheme();
     render();
   }
@@ -990,6 +1073,85 @@
 
   function findCat(id) {
     return state.categories.find((c) => c.id === id);
+  }
+
+  function syncAuthUI() {
+    const btn = $("#btnLogin");
+    if (btn) {
+      // 手机端仅访客模式，不提供登录入口；未启用 KEY 时也无需登录
+      const show = auth.required && !auth.mobile;
+      btn.classList.toggle("hidden", !show);
+      const label = $("#btnLoginLabel");
+      const icon = $("[data-icon]", btn);
+      if (auth.authenticated) {
+        if (label) label.textContent = "退出";
+        btn.setAttribute("title", "已登录，点击退出");
+        if (icon) {
+          icon.dataset.hydrated = "1";
+          icon.innerHTML = window.LucideIcons.svg("unlock");
+        }
+      } else {
+        if (label) label.textContent = "登录";
+        btn.setAttribute("title", "输入访问密钥以解锁编辑");
+        if (icon) {
+          icon.dataset.hydrated = "1";
+          icon.innerHTML = window.LucideIcons.svg("lock");
+        }
+      }
+    }
+    // 访客模式隐藏导入 / 导出入口（均为数据级操作）
+    const importBtn = $("#btnImport");
+    if (importBtn) importBtn.classList.toggle("hidden", !canEdit());
+    const exportBtn = $("#btnExport");
+    if (exportBtn) exportBtn.classList.toggle("hidden", !canEdit());
+    document.documentElement.classList.toggle("guest-mode", !canEdit());
+  }
+
+  function openLogin() {
+    openModal({
+      title: "登录",
+      body: `
+        <div class="field">
+          <label for="authKey">访问密钥</label>
+          <input id="authKey" type="password" autocomplete="current-password" placeholder="请输入 KEY" />
+        </div>
+        <p class="hint">输入正确的密钥后解锁添加 / 编辑 / 删除等功能。</p>
+      `,
+      confirmText: "登录",
+      onConfirm: async () => {
+        const input = $("#authKey");
+        const value = input ? input.value.trim() : "";
+        if (!value) {
+          toast("请输入访问密钥", true);
+          return false;
+        }
+        storeKey(value);
+        auth.authenticated = true;
+        try {
+          await api("/api/login", { method: "POST" });
+        } catch (e) {
+          auth.authenticated = false;
+          storeKey("");
+          toast(e.message || "密钥错误", true);
+          return false;
+        }
+        await reload();
+        toast("已登录，可编辑");
+        return true;
+      },
+    });
+    setTimeout(() => {
+      const input = $("#authKey");
+      if (input) input.focus();
+    }, 30);
+  }
+
+  function logout() {
+    auth.authenticated = false;
+    storeKey("");
+    if (sortMode) setSortMode(false, { silent: true });
+    reload().catch(() => {});
+    toast("已退出登录");
   }
 
   function openAddCategory() {
@@ -1240,16 +1402,20 @@
   }
 
   function linkMenuItems(id) {
-    return [
+    const items = [
       { id: "open", label: "打开链接", run: () => openLink(id) },
       { id: "copy", label: "复制链接", run: () => copyLink(id) },
-      { sep: true },
-      { id: "edit", label: "编辑链接", run: () => openEditLink(id) },
-      { id: "del", label: "删除链接", danger: true, run: () => openDeleteLink(id) },
     ];
+    if (canEdit()) {
+      items.push({ sep: true });
+      items.push({ id: "edit", label: "编辑链接", run: () => openEditLink(id) });
+      items.push({ id: "del", label: "删除链接", danger: true, run: () => openDeleteLink(id) });
+    }
+    return items;
   }
 
   function catMenuItems(catId) {
+    if (!canEdit()) return [];
     const isUncat = catId === state.meta.uncategorized_id;
     const items = [
       { id: "add-link", label: "新增链接", run: () => openAddLink(catId) },
@@ -1278,10 +1444,12 @@
     }
     const panel = el && el.closest ? el.closest("[data-cat-panel]") : null;
     if (panel) {
+      const items = catMenuItems(panel.getAttribute("data-cat-panel"));
+      if (!items.length) return null;
       return {
         kind: "cat",
         el: panel,
-        items: catMenuItems(panel.getAttribute("data-cat-panel")),
+        items,
       };
     }
     return null;
@@ -1425,7 +1593,10 @@
 
   async function exportConfig() {
     try {
-      const res = await fetch("api/export");
+      const exportHeaders = {};
+      const exportKey = activeKey();
+      if (exportKey) exportHeaders[KEY_HEADER] = exportKey;
+      const res = await fetch("api/export", { headers: exportHeaders });
       if (!res.ok) {
         let msg = `导出失败 (${res.status})`;
         try {
@@ -1453,6 +1624,10 @@
 
   function openImportConfirm(file) {
     if (!file) return;
+    if (!canEdit()) {
+      toast("访客模式不能导入配置", true);
+      return;
+    }
     const name = file.name || "所选文件";
     openModal({
       title: "导入配置",
@@ -1466,9 +1641,12 @@
           }
           const fd = new FormData();
           fd.append("file", file);
+          const importHeaders = { Accept: "application/json" };
+          const importKey = activeKey();
+          if (importKey) importHeaders[KEY_HEADER] = importKey;
           const res = await fetch("api/import", {
             method: "POST",
-            headers: { Accept: "application/json" },
+            headers: importHeaders,
             body: fd,
           });
           let json = null;
@@ -1515,6 +1693,13 @@
       sortBtn.addEventListener("click", () => {
         if (sortMode) saveSortOrder();
         else setSortMode(true);
+      });
+    }
+    const loginBtn = $("#btnLogin");
+    if (loginBtn) {
+      loginBtn.addEventListener("click", () => {
+        if (auth.authenticated) logout();
+        else openLogin();
       });
     }
     document.addEventListener("pointerdown", beginDrag);
@@ -1580,8 +1765,11 @@
   }
 
   async function boot() {
+    auth.mobile = detectMobile();
+    auth.authenticated = !auth.mobile && !!readStoredKey();
     hydrateIcons(document);
     syncSortButton();
+    syncAuthUI();
     updateClock();
     setInterval(updateClock, 1000);
     applyTheme();

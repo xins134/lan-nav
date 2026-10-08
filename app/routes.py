@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import re
 from typing import Any, Callable
@@ -50,6 +51,31 @@ def err(code: str, message: str, status_code: int = 400) -> JSONResponse:
         {"success": False, "error": {"code": code, "message": message}},
         status_code=status_code,
     )
+
+
+# ---------- 访问密钥 / 鉴权 ----------
+
+KEY_HEADER = "X-Nav-Key"
+
+
+def key_required() -> bool:
+    """是否启用了访问密钥（KEY 为空则完全不鉴权）。"""
+    return bool(settings.key)
+
+
+def key_matches(request: Request) -> bool:
+    """请求头中的密钥是否正确（未开启鉴权时恒为 True）。"""
+    if not key_required():
+        return True
+    supplied = request.headers.get(KEY_HEADER, "")
+    return hmac.compare_digest(supplied, settings.key)
+
+
+def guard(request: Request) -> JSONResponse | None:
+    """校验写操作权限，未通过时返回 401 响应。"""
+    if key_matches(request):
+        return None
+    return err("UNAUTHORIZED", "需要正确的访问密钥", 401)
 
 
 def _apply_category_create(body: CategoryCreate) -> dict[str, Any]:
@@ -213,6 +239,22 @@ def _apply_link_reorder(ids: list[str]) -> dict[str, Any]:
     return mutate(_fn)
 
 
+def _apply_pin_reorder(ids: list[str]) -> dict[str, Any]:
+    """置顶区独立排序：只写入 pin_order，不影响链接在分类中的顺序。"""
+
+    def _fn(data):
+        by_id = {lk.id: lk for lk in data.links}
+        missing = [i for i in ids if i not in by_id]
+        if missing:
+            raise StorageError("NOT_FOUND", f"链接不存在: {missing[0]}")
+        base = 10
+        for i, lid in enumerate(ids):
+            by_id[lid].pin_order = base + i * 10
+        return {"ids": ids}
+
+    return mutate(_fn)
+
+
 def _safe(fn: Callable[[], Any]):
     try:
         return ok(fn())
@@ -273,61 +315,109 @@ async def health() -> JSONResponse:
 
 
 @api.get("/navigation")
-async def get_navigation() -> JSONResponse:
+async def get_navigation(request: Request) -> JSONResponse:
     def _fn():
         data = load_data()
         payload = data.to_public_dict()
-        payload["meta"] = {"uncategorized_id": UNCATEGORIZED_ID}
+        payload["meta"] = {
+            "uncategorized_id": UNCATEGORIZED_ID,
+            "requires_key": key_required(),
+            "authenticated": key_matches(request),
+        }
         return payload
 
     return _safe(_fn)
 
 
+@api.post("/login")
+async def login(request: Request) -> JSONResponse:
+    """校验访问密钥；成功后前端即可携带密钥调用写接口。"""
+    if key_matches(request):
+        return ok({"authenticated": True, "requires_key": key_required()})
+    return err("UNAUTHORIZED", "访问密钥错误", 401)
+
+
 @api.post("/categories")
-async def create_category(body: CategoryCreate) -> JSONResponse:
+async def create_category(request: Request, body: CategoryCreate) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
     return _safe(lambda: _apply_category_create(body))
 
 
 @api.put("/categories/{cat_id}")
-async def update_category(cat_id: str, body: CategoryUpdate) -> JSONResponse:
+async def update_category(request: Request, cat_id: str, body: CategoryUpdate) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
     return _safe(lambda: _apply_category_update(cat_id, body))
 
 
 @api.delete("/categories/{cat_id}")
 async def delete_category(
+    request: Request,
     cat_id: str,
     action: str = "move_uncategorized",
 ) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
     return _safe(lambda: _apply_category_delete(cat_id, action))
 
 
 @api.post("/categories/reorder")
-async def reorder_categories(body: ReorderPayload) -> JSONResponse:
+async def reorder_categories(request: Request, body: ReorderPayload) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
     return _safe(lambda: _apply_category_reorder(body.ids))
 
 
 @api.post("/links")
-async def create_link(body: LinkCreate) -> JSONResponse:
+async def create_link(request: Request, body: LinkCreate) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
     return _safe(lambda: _apply_link_create(body))
 
 
 @api.put("/links/{link_id}")
-async def update_link(link_id: str, body: LinkUpdate) -> JSONResponse:
+async def update_link(request: Request, link_id: str, body: LinkUpdate) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
     return _safe(lambda: _apply_link_update(link_id, body))
 
 
 @api.delete("/links/{link_id}")
-async def delete_link(link_id: str) -> JSONResponse:
+async def delete_link(request: Request, link_id: str) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
     return _safe(lambda: _apply_link_delete(link_id))
 
 
 @api.post("/links/reorder")
-async def reorder_links(body: ReorderPayload) -> JSONResponse:
+async def reorder_links(request: Request, body: ReorderPayload) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
     return _safe(lambda: _apply_link_reorder(body.ids))
 
 
+@api.post("/links/pin-reorder")
+async def reorder_pinned_links(request: Request, body: ReorderPayload) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
+    return _safe(lambda: _apply_pin_reorder(body.ids))
+
+
 @api.get("/export", response_model=None)
-async def export_navigation():
+async def export_navigation(request: Request):
+    denied = guard(request)
+    if denied:
+        return denied
     try:
         content = export_archive()
         return Response(
@@ -341,7 +431,10 @@ async def export_navigation():
 
 
 @api.post("/import")
-async def import_navigation(file: UploadFile = File(...)) -> JSONResponse:
+async def import_navigation(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+    denied = guard(request)
+    if denied:
+        return denied
     raw = await file.read()
 
     def _fn():

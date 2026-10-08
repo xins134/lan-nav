@@ -146,6 +146,8 @@ class Link(BaseModel):
     pinned: bool = False
     status: LinkStatus = "normal"
     order: int = 10
+    # 置顶区独立排序位（为空则回退到 order，兼容旧数据）
+    pin_order: int | None = None
 
     @field_validator("title")
     @classmethod
@@ -234,7 +236,14 @@ class NavigationData(BaseModel):
         items = self.links
         if category_id is not None:
             items = [lk for lk in items if lk.category_id == category_id]
-        return sorted(items, key=lambda lk: (not lk.pinned, lk.order, lk.title.lower()))
+
+        def _rank(lk: Link) -> int:
+            # 置顶项按独立的 pin_order 排序（缺省回退 order），其余按 order
+            if lk.pinned and lk.pin_order is not None:
+                return lk.pin_order
+            return lk.order
+
+        return sorted(items, key=lambda lk: (not lk.pinned, _rank(lk), lk.title.lower()))
 
     def to_public_dict(self) -> dict[str, Any]:
         return {

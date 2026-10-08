@@ -168,8 +168,34 @@ body {
   flex-wrap: wrap;
 }
 
+.auth-btn {
+  gap: 0.35rem;
+  color: var(--text-secondary);
+}
+
+.auth-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.auth-btn:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: var(--accent-soft);
+}
+
+/* 访客模式：不提供任何写操作的入口 */
+html.guest-mode #addCategoryWrap,
+html.guest-mode .btn-sort-toggle {
+  display: none !important;
+}
+
 .datetime {
+  font-family: var(--mono);
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
   color: var(--text-secondary);
   font-size: 0.875rem;
   padding: 0.45rem 0.7rem;
@@ -1306,11 +1332,6 @@ html.sort-mode .link-card:hover {
 
 html.sort-mode .category-panel {
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
-}
-
-/* 排序时置顶区是重复视图，隐藏以免混淆 */
-html.sort-mode #pinnedSection {
-  display: none !important;
 }
 
 .is-dragging {
