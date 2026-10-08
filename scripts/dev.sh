@@ -29,7 +29,7 @@ fi
 
 # shellcheck disable=SC1091
 source .venv/bin/activate
-pip install -q -r requirements.txt
+pip install -q -r requirements-dev.txt
 
 if [[ ! -f .env ]]; then
   cp .env.example .env

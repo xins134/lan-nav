@@ -34,7 +34,8 @@
 ├── Dockerfile
 ├── compose.yml
 ├── .env.example
-├── requirements.txt
+├── requirements.txt      # 运行时依赖
+├── requirements-dev.txt  # 开发/测试依赖
 └── run.py
 ```
 
@@ -73,7 +74,7 @@ docker compose down
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # 仅运行用 requirements.txt
 cp .env.example .env
 python run.py
 ```
@@ -102,6 +103,12 @@ pytest -q
 | `TZ` | 时区 | `Asia/Shanghai` |
 | `DATA_FILE` | 数据文件路径 | `data/navigation.yml` |
 | `EXAMPLE_FILE` | 首次初始化用的示例 YAML | `data/navigation.yml.example` |
+| `ACCESS_LOG` | 是否输出逐请求访问日志 | `false` |
+| `UVICORN_LOOP` | 事件循环：`asyncio` / `uvloop`（需自行安装） | `asyncio` |
+| `UVICORN_HTTP` | HTTP 实现：`h11` / `httptools`（需自行安装） | `h11` |
+| `KEEPALIVE_TIMEOUT` | 长连接保活秒数 | `5` |
+| `LIMIT_CONCURRENCY` | 最大并发连接数（空为不限制） | 空 |
+| `FORWARDED_ALLOW_IPS` | 信任的反代来源 IP | `127.0.0.1` |
 
 ## Debian 12 部署
 
@@ -156,6 +163,23 @@ sudo ln -s /etc/nginx/sites-available/lan-nav /etc/nginx/sites-enabled/lan-nav
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+## 资源占用优化
+
+个人导航页对吞吐要求极低，默认按「省内存 / 省 CPU」取向配置：
+
+- **运行时依赖精简**：镜像只安装 `requirements.txt`（不含 `pytest` 等开发依赖），
+  且使用纯 `uvicorn`（不装 `uvicorn[standard]`），避免载入 uvloop / httptools /
+  websockets / watchfiles。
+- **单进程 + 精简协议栈**：`run.py` 固定单 worker、`loop=asyncio`、`http=h11`、
+  关闭 WebSocket，并关闭访问日志与 `server` / `date` 响应头。
+- **存储层内存缓存**：`app/storage.py` 以文件 `mtime + 大小 + inode` 为键缓存已解析
+  的导航数据，命中时不再重复读取 / 解析 YAML 与模型校验
+  （约 `3.7ms → 2.7µs` / 次）。
+- **容器资源上限**：`compose.yml` 默认限制 `0.50` CPU、`128M` 内存，并限制日志体积。
+
+如需更高吞吐，可自行 `pip install uvloop httptools` 并设置
+`UVICORN_LOOP=uvloop`、`UVICORN_HTTP=httptools`。
 
 ## 数据文件
 

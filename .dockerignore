@@ -7,9 +7,11 @@ __pycache__/
 *.pyc
 *.egg-info/
 .DS_Store
+download/
 data/navigation.yml
 data/navigation.yml.bak
 tests/
 deploy/
 scripts/
 *.md
+requirements-dev.txt

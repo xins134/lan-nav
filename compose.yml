@@ -13,6 +13,26 @@ services:
       TZ: Asia/Shanghai
       DATA_FILE: /app/data/navigation.yml
       EXAMPLE_FILE: /app/navigation.yml.example
+      # 精简运行时（见 run.py）：关闭访问日志、使用 asyncio + h11
+      ACCESS_LOG: "false"
+      UVICORN_LOOP: asyncio
+      UVICORN_HTTP: h11
+      KEEPALIVE_TIMEOUT: "5"
     volumes:
       # 导航数据持久化到当前目录 ./data
       - ./data:/app/data
+    # 限制资源占用，避免异常时吃满主机
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+        reservations:
+          memory: 32M
+    stop_grace_period: 10s
+    # 限制日志体积，防止长期运行占满磁盘
+    logging:
+      driver: json-file
+      options:
+        max-size: "2m"
+        max-file: "2"

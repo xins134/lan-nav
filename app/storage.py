@@ -26,6 +26,10 @@ UNCATEGORIZED_NAME = "未分类"
 
 _lock = threading.RLock()
 
+# 内存缓存：以 (mtime, size, inode) 为键，命中时不再重复解析 YAML + 校验模型。
+_cache: "NavigationData | None" = None
+_cache_key: tuple[int, int, int] | None = None
+
 
 class StorageError(Exception):
     """存储层错误。"""
@@ -322,6 +326,30 @@ def _read_file(path: Path) -> NavigationData:
     return _parse_yaml_text(text)
 
 
+def _stat_key(path: Path) -> tuple[int, int, int] | None:
+    """文件状态指纹；用于判断磁盘数据是否变化。"""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+
+def _remember(data: NavigationData) -> NavigationData:
+    """写入内存缓存并返回该对象。"""
+    global _cache, _cache_key
+    _cache = data
+    _cache_key = _stat_key(settings.data_file)
+    return data
+
+
+def invalidate_cache() -> None:
+    """外部改动磁盘数据后，强制下次重新解析。"""
+    global _cache, _cache_key
+    _cache = None
+    _cache_key = None
+
+
 def initialize_storage() -> NavigationData:
     """启动时初始化：生成、恢复或加载数据。"""
     with _lock:
@@ -348,7 +376,7 @@ def initialize_storage() -> NavigationData:
                 data = _build_demo_data()
                 logger.info("使用内置演示数据初始化")
             _atomic_write(data_file, _dump_yaml(data))
-            return data
+            return _remember(data)
 
         try:
             data = _read_file(data_file)
@@ -357,8 +385,8 @@ def initialize_storage() -> NavigationData:
                 (lk.icon_url or "").startswith(("data:", "http://", "https://"))
                 for lk in data.links
             ):
-                data = save_data(data)
-            return data
+                return save_data(data)
+            return _remember(data)
         except StorageError as exc:
             logger.error("主 YAML 损坏: %s", exc.message)
             if backup.exists():
@@ -366,7 +394,7 @@ def initialize_storage() -> NavigationData:
                     data = _read_file(backup)
                     logger.warning("已从备份恢复: %s", backup)
                     _atomic_write(data_file, _dump_yaml(data))
-                    return data
+                    return _remember(data)
                 except StorageError as bak_exc:
                     logger.error("备份也无效: %s", bak_exc.message)
             raise StorageError(
@@ -376,16 +404,22 @@ def initialize_storage() -> NavigationData:
 
 
 def load_data() -> NavigationData:
+    """读取导航数据。命中内存缓存时不做磁盘 IO。"""
     with _lock:
-        if not settings.data_file.exists():
+        data_file = settings.data_file
+        if not data_file.exists():
+            invalidate_cache()
             return initialize_storage()
-        data = _read_file(settings.data_file)
+        key = _stat_key(data_file)
+        if _cache is not None and key is not None and key == _cache_key:
+            return _cache
+        data = _read_file(data_file)
         if any(
             (lk.icon_url or "").startswith(("data:", "http://", "https://"))
             for lk in data.links
         ):
             return save_data(data)
-        return data
+        return _remember(data)
 
 
 def save_data(data: NavigationData) -> NavigationData:
@@ -405,7 +439,7 @@ def save_data(data: NavigationData) -> NavigationData:
             _atomic_write(data_file, content)
         except OSError as exc:
             raise StorageError("IO_ERROR", f"无法写入数据文件: {exc}") from exc
-        return data
+        return _remember(data)
 
 
 MAX_IMPORT_BYTES = 16 * 1024 * 1024
