@@ -21,9 +21,11 @@ class Settings:
     """运行时配置。"""
 
     def __init__(self) -> None:
-        self.admin_token: str = os.getenv("ADMIN_TOKEN", "").strip()
         self.host: str = os.getenv("HOST", "127.0.0.1").strip() or "127.0.0.1"
-        self.port: int = int(os.getenv("PORT", "8090"))
+        try:
+            self.port: int = int(os.getenv("PORT", "8090"))
+        except ValueError:
+            self.port = 8090
         self.debug: bool = _bool(os.getenv("DEBUG"), default=False)
         self.tz: str = os.getenv("TZ", "Asia/Shanghai").strip() or "Asia/Shanghai"
 
@@ -31,11 +33,13 @@ class Settings:
         path = Path(data_file)
         self.data_file: Path = path if path.is_absolute() else (ROOT_DIR / path)
         self.data_backup: Path = self.data_file.with_suffix(self.data_file.suffix + ".bak")
-        self.example_file: Path = ROOT_DIR / "data" / "navigation.yml.example"
+        self.icon_dir: Path = self.data_file.parent / "icon"
 
-    @property
-    def admin_protected(self) -> bool:
-        return bool(self.admin_token)
+        example = os.getenv("EXAMPLE_FILE", "").strip()
+        example_path = Path(example) if example else (ROOT_DIR / "data" / "navigation.yml.example")
+        self.example_file: Path = (
+            example_path if example_path.is_absolute() else (ROOT_DIR / example_path)
+        )
 
 
 settings = Settings()

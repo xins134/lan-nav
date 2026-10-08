@@ -11,7 +11,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 apt update
-apt install -y python3 python3-venv python3-pip nginx
+apt install -y python3 python3-venv python3-pip nginx rsync
 
 id -u lan-nav >/dev/null 2>&1 || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin lan-nav
 
@@ -31,11 +31,7 @@ python3 -m venv .venv
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
-  # 生产默认关闭调试
   sed -i 's/^DEBUG=.*/DEBUG=false/' .env
-  TOKEN="$(openssl rand -hex 24)"
-  sed -i "s/^ADMIN_TOKEN=.*/ADMIN_TOKEN=${TOKEN}/" .env
-  echo "已生成 ADMIN_TOKEN，请查看 $APP_DIR/.env"
 fi
 
 mkdir -p data

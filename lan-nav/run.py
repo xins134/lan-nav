@@ -27,6 +27,8 @@ def main() -> None:
         port=settings.port,
         reload=settings.debug,
         reload_dirs=[str(ROOT / "app")] if settings.debug else None,
+        proxy_headers=True,
+        forwarded_allow_ips="127.0.0.1",
     )
 
 

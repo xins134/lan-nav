@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, File, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
 from app.config import ROOT_DIR, settings
+from app.icons import delete_icon_file, persist_icon
 from app.models import (
     Category,
     CategoryCreate,
@@ -19,12 +21,21 @@ from app.models import (
     LinkCreate,
     LinkUpdate,
     ReorderPayload,
+    public_link_dict,
 )
-from app.storage import UNCATEGORIZED_ID, StorageError, load_data, mutate
+from app.storage import (
+    UNCATEGORIZED_ID,
+    StorageError,
+    export_archive,
+    import_payload,
+    load_data,
+    mutate,
+)
 
 logger = logging.getLogger("lan-nav.api")
 
 templates = Jinja2Templates(directory=str(ROOT_DIR / "app" / "templates"))
+_ICON_FILENAME = re.compile(r"^[A-Za-z0-9._-]+\.png$")
 
 api = APIRouter(prefix="/api")
 pages = APIRouter()
@@ -39,21 +50,6 @@ def err(code: str, message: str, status_code: int = 400) -> JSONResponse:
         {"success": False, "error": {"code": code, "message": message}},
         status_code=status_code,
     )
-
-
-def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")) -> None:
-    """写入接口鉴权。不记录 Token。"""
-    if not settings.admin_protected:
-        return
-    provided = (x_admin_token or "").strip()
-    if not provided or provided != settings.admin_token:
-        # 故意不记录 header 内容
-        logger.warning("写入请求鉴权失败")
-        raise AdminAuthError()
-
-
-class AdminAuthError(Exception):
-    pass
 
 
 def _apply_category_create(body: CategoryCreate) -> dict[str, Any]:
@@ -82,7 +78,6 @@ def _apply_category_update(cat_id: str, body: CategoryUpdate) -> dict[str, Any]:
             raise StorageError("NOT_FOUND", "分类不存在")
         payload = body.model_dump(exclude_unset=True)
         updated = cat.model_copy(update=payload)
-        # 重新校验
         updated = Category.model_validate(updated.model_dump())
         idx = data.categories.index(cat)
         data.categories[idx] = updated
@@ -119,7 +114,6 @@ def _apply_category_reorder(ids: list[str]) -> dict[str, Any]:
         missing = [i for i in ids if i not in by_id]
         if missing:
             raise StorageError("NOT_FOUND", f"分类不存在: {missing[0]}")
-        # 按传入顺序重排，未出现的保持相对顺序接在后面
         ordered: list = []
         seen: set[str] = set()
         base = 10
@@ -152,15 +146,19 @@ def _apply_link_create(body: LinkCreate) -> dict[str, Any]:
             description=body.description,
             category_id=cat_id,
             tags=body.tags,  # type: ignore[arg-type]
-            icon_url=body.icon_url,
+            icon_url="",
             icon=body.icon,
             color=body.color,
             pinned=body.pinned,
             status=body.status,
             order=order,
         )
+        try:
+            link.icon_url = persist_icon(link.id, body.icon_url)
+        except ValueError as exc:
+            raise StorageError("VALIDATION_ERROR", str(exc)) from exc
         data.links.append(link)
-        return link.model_dump()
+        return public_link_dict(link)
 
     return mutate(_fn)
 
@@ -176,10 +174,15 @@ def _apply_link_update(link_id: str, body: LinkUpdate) -> dict[str, Any]:
             if not any(c.id == cat_id for c in data.categories):
                 raise StorageError("VALIDATION_ERROR", "所属分类不存在")
             payload["category_id"] = cat_id
+        if "icon_url" in payload:
+            try:
+                payload["icon_url"] = persist_icon(link.id, payload.get("icon_url") or "")
+            except ValueError as exc:
+                raise StorageError("VALIDATION_ERROR", str(exc)) from exc
         updated = Link.model_validate({**link.model_dump(), **payload})
         idx = data.links.index(link)
         data.links[idx] = updated
-        return updated.model_dump()
+        return public_link_dict(updated)
 
     return mutate(_fn)
 
@@ -190,6 +193,7 @@ def _apply_link_delete(link_id: str) -> dict[str, Any]:
         data.links = [lk for lk in data.links if lk.id != link_id]
         if len(data.links) == before:
             raise StorageError("NOT_FOUND", "链接不存在")
+        delete_icon_file(link_id)
         return {"deleted_id": link_id}
 
     return mutate(_fn)
@@ -212,15 +216,23 @@ def _apply_link_reorder(ids: list[str]) -> dict[str, Any]:
 def _safe(fn: Callable[[], Any]):
     try:
         return ok(fn())
-    except AdminAuthError:
-        return err("UNAUTHORIZED", "需要有效的管理 Token", 401)
     except StorageError as exc:
         status = 404 if exc.code == "NOT_FOUND" else 403 if exc.code == "FORBIDDEN" else 400
+        if exc.code in {"CORRUPT_DATA", "IO_ERROR"}:
+            status = 503
         return err(exc.code, exc.message, status)
     except ValidationError as exc:
         return err("VALIDATION_ERROR", str(exc), 400)
     except ValueError as exc:
         return err("VALIDATION_ERROR", str(exc), 400)
+
+
+def _asset_ver(rel: str) -> str:
+    path = ROOT_DIR / "app" / "static" / rel
+    try:
+        return str(int(path.stat().st_mtime))
+    except OSError:
+        return "1"
 
 
 @pages.get("/", response_class=HTMLResponse)
@@ -229,21 +241,35 @@ async def index(request: Request) -> HTMLResponse:
         request,
         "index.html",
         {
-            "admin_protected": settings.admin_protected,
-            "site_title": "局域网导航",
+            "css_ver": _asset_ver("css/app.css"),
+            "js_ver": _asset_ver("js/app.js"),
+            "icons_ver": _asset_ver("js/icons.js"),
         },
     )
 
 
+@pages.get("/icon/{filename}")
+async def serve_link_icon(filename: str):
+    if not _ICON_FILENAME.match(filename):
+        return err("NOT_FOUND", "图标不存在", 404)
+    folder = settings.icon_dir.resolve()
+    path = (settings.icon_dir / filename).resolve()
+    try:
+        path.relative_to(folder)
+    except ValueError:
+        return err("NOT_FOUND", "图标不存在", 404)
+    if not path.is_file():
+        return err("NOT_FOUND", "图标不存在", 404)
+    return FileResponse(path, media_type="image/png")
+
+
 @api.get("/health")
 async def health() -> JSONResponse:
+    try:
+        load_data()
+    except StorageError as exc:
+        return err(exc.code, exc.message, 503)
     return ok({"status": "ok"})
-
-
-@api.get("/auth/verify")
-async def verify_auth(_: None = Depends(require_admin)) -> JSONResponse:
-    """校验管理 Token（不修改数据）。未启用保护时始终成功。"""
-    return ok({"authenticated": True, "admin_protected": settings.admin_protected})
 
 
 @api.get("/navigation")
@@ -251,29 +277,19 @@ async def get_navigation() -> JSONResponse:
     def _fn():
         data = load_data()
         payload = data.to_public_dict()
-        payload["meta"] = {
-            "admin_protected": settings.admin_protected,
-            "uncategorized_id": UNCATEGORIZED_ID,
-        }
+        payload["meta"] = {"uncategorized_id": UNCATEGORIZED_ID}
         return payload
 
     return _safe(_fn)
 
 
 @api.post("/categories")
-async def create_category(
-    body: CategoryCreate,
-    _: None = Depends(require_admin),
-) -> JSONResponse:
+async def create_category(body: CategoryCreate) -> JSONResponse:
     return _safe(lambda: _apply_category_create(body))
 
 
 @api.put("/categories/{cat_id}")
-async def update_category(
-    cat_id: str,
-    body: CategoryUpdate,
-    _: None = Depends(require_admin),
-) -> JSONResponse:
+async def update_category(cat_id: str, body: CategoryUpdate) -> JSONResponse:
     return _safe(lambda: _apply_category_update(cat_id, body))
 
 
@@ -281,50 +297,58 @@ async def update_category(
 async def delete_category(
     cat_id: str,
     action: str = "move_uncategorized",
-    _: None = Depends(require_admin),
 ) -> JSONResponse:
     return _safe(lambda: _apply_category_delete(cat_id, action))
 
 
 @api.post("/categories/reorder")
-async def reorder_categories(
-    body: ReorderPayload,
-    _: None = Depends(require_admin),
-) -> JSONResponse:
+async def reorder_categories(body: ReorderPayload) -> JSONResponse:
     return _safe(lambda: _apply_category_reorder(body.ids))
 
 
 @api.post("/links")
-async def create_link(
-    body: LinkCreate,
-    _: None = Depends(require_admin),
-) -> JSONResponse:
+async def create_link(body: LinkCreate) -> JSONResponse:
     return _safe(lambda: _apply_link_create(body))
 
 
 @api.put("/links/{link_id}")
-async def update_link(
-    link_id: str,
-    body: LinkUpdate,
-    _: None = Depends(require_admin),
-) -> JSONResponse:
+async def update_link(link_id: str, body: LinkUpdate) -> JSONResponse:
     return _safe(lambda: _apply_link_update(link_id, body))
 
 
 @api.delete("/links/{link_id}")
-async def delete_link(
-    link_id: str,
-    _: None = Depends(require_admin),
-) -> JSONResponse:
+async def delete_link(link_id: str) -> JSONResponse:
     return _safe(lambda: _apply_link_delete(link_id))
 
 
 @api.post("/links/reorder")
-async def reorder_links(
-    body: ReorderPayload,
-    _: None = Depends(require_admin),
-) -> JSONResponse:
+async def reorder_links(body: ReorderPayload) -> JSONResponse:
     return _safe(lambda: _apply_link_reorder(body.ids))
 
 
-# AdminAuthError 由 main 中的异常处理器统一返回 401
+@api.get("/export", response_model=None)
+async def export_navigation():
+    try:
+        content = export_archive()
+        return Response(
+            content=content,
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="navigation.zip"'},
+        )
+    except StorageError as exc:
+        status = 503 if exc.code in {"CORRUPT_DATA", "IO_ERROR"} else 400
+        return err(exc.code, exc.message, status)
+
+
+@api.post("/import")
+async def import_navigation(file: UploadFile = File(...)) -> JSONResponse:
+    raw = await file.read()
+
+    def _fn():
+        data = import_payload(raw, file.filename or "")
+        return {
+            "categories": len(data.categories),
+            "links": len(data.links),
+        }
+
+    return _safe(_fn)

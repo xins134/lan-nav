@@ -13,6 +13,7 @@ ThemeMode = Literal["system", "light", "dark"]
 
 _HTTP_RE = re.compile(r"^https?://", re.IGNORECASE)
 _COLOR_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+_ICON_PATH_RE = re.compile(r"^icon/[A-Za-z0-9._-]+\.png$")
 
 
 def new_id() -> str:
@@ -35,6 +36,42 @@ def normalize_url(url: str) -> str:
     if not _HTTP_RE.match(value):
         raise ValueError("URL 仅允许 http:// 或 https://")
     return value
+
+
+def normalize_icon_data(value: str | None) -> str:
+    """允许空、icon/ 相对路径、data URL（保存前会落成 png 文件）或 http(s)。"""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("/icon/"):
+        raw = raw[1:]
+    if _ICON_PATH_RE.match(raw):
+        return raw
+    if raw.lower().startswith("data:"):
+        header, sep, payload = raw.partition(",")
+        if not sep:
+            raise ValueError("图标数据格式无效")
+        payload = re.sub(r"\s+", "", payload)
+        compact = f"{header},{payload}"
+        if len(compact) > 100_000:
+            raise ValueError("图标数据过大")
+        if not re.match(
+            r"^data:image/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/]+=*$",
+            compact,
+            re.IGNORECASE,
+        ):
+            raise ValueError("图标仅支持 PNG / JPEG / WebP / GIF")
+        return compact
+    if raw.startswith(("http://", "https://")):
+        return normalize_url(raw)
+    raise ValueError("图标路径无效")
+
+
+def public_icon_url(ref: str) -> str:
+    raw = (ref or "").strip()
+    if raw.startswith("icon/"):
+        return "/" + raw
+    return raw
 
 
 def normalize_color(color: str | None, default: str = "#6366f1") -> str:
@@ -148,10 +185,7 @@ class Link(BaseModel):
     @field_validator("icon_url")
     @classmethod
     def icon_url_ok(cls, v: str) -> str:
-        v = (v or "").strip()
-        if not v:
-            return ""
-        return normalize_url(v)
+        return normalize_icon_data(v)
 
     @field_validator("icon")
     @classmethod
@@ -164,6 +198,16 @@ class Link(BaseModel):
         return normalize_color(v, "#6366f1")
 
 
+MAX_CATEGORIES = 200
+MAX_LINKS = 2000
+
+
+def public_link_dict(link: Link) -> dict[str, Any]:
+    payload = link.model_dump()
+    payload["icon_url"] = public_icon_url(payload.get("icon_url") or "")
+    return payload
+
+
 class NavigationData(BaseModel):
     site: SiteConfig = Field(default_factory=SiteConfig)
     categories: list[Category] = Field(default_factory=list)
@@ -171,6 +215,10 @@ class NavigationData(BaseModel):
 
     @model_validator(mode="after")
     def unique_ids(self) -> NavigationData:
+        if len(self.categories) > MAX_CATEGORIES:
+            raise ValueError(f"分类数量不能超过 {MAX_CATEGORIES}")
+        if len(self.links) > MAX_LINKS:
+            raise ValueError(f"链接数量不能超过 {MAX_LINKS}")
         cat_ids = [c.id for c in self.categories]
         if len(cat_ids) != len(set(cat_ids)):
             raise ValueError("分类 ID 存在重复")
@@ -192,7 +240,7 @@ class NavigationData(BaseModel):
         return {
             "site": self.site.model_dump(),
             "categories": [c.model_dump() for c in self.sorted_categories()],
-            "links": [lk.model_dump() for lk in self.sorted_links()],
+            "links": [public_link_dict(lk) for lk in self.sorted_links()],
         }
 
 
@@ -228,6 +276,11 @@ class LinkCreate(BaseModel):
     status: LinkStatus = "normal"
     order: int | None = None
 
+    @field_validator("icon_url")
+    @classmethod
+    def icon_url_ok(cls, v: str) -> str:
+        return normalize_icon_data(v)
+
 
 class LinkUpdate(BaseModel):
     title: str | None = None
@@ -241,6 +294,13 @@ class LinkUpdate(BaseModel):
     pinned: bool | None = None
     status: LinkStatus | None = None
     order: int | None = None
+
+    @field_validator("icon_url")
+    @classmethod
+    def icon_url_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return normalize_icon_data(v)
 
 
 class ReorderPayload(BaseModel):

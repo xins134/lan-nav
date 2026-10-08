@@ -1,0 +1,18 @@
+services:
+  lan-nav:
+    build: .
+    image: lan-nav:latest
+    container_name: lan-nav
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8090"
+      DEBUG: "false"
+      TZ: Asia/Shanghai
+      DATA_FILE: /app/data/navigation.yml
+      EXAMPLE_FILE: /app/navigation.yml.example
+    volumes:
+      # 导航数据持久化到当前目录 ./data
+      - ./data:/app/data

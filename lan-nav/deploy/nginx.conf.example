@@ -1,21 +1,25 @@
 # 将本文件复制到 /etc/nginx/sites-available/lan-nav
 # 并用局域网 DNS 或客户端 /etc/hosts 将 nav.lan 指向本机内网 IP。
 #
-# 若暴露公网，请务必额外启用 VPN、Nginx Basic Auth 或其他访问控制。
+# 外网访问建议：
+# 1. 启用 HTTPS
+# 2. 使用 16 位随机 secret path（openssl rand -hex 8）
+# 3. 未匹配路径返回 404，避免暴露站点存在
+# 4. 应用必须监听 127.0.0.1（.env 中 HOST=127.0.0.1），由 Nginx 对外暴露
 
 upstream lan_nav_upstream {
     server 127.0.0.1:8090;
     keepalive 8;
 }
 
+# ---------- 内网直连示例（局域网） ----------
 server {
     listen 80;
     listen [::]:80;
     server_name nav.lan;
 
-    client_max_body_size 1m;
+    client_max_body_size 2m;
 
-    # 基础安全响应头
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
@@ -29,7 +33,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         expires 7d;
-        add_header Cache-Control "public, max-age=604800, immutable";
+        add_header Cache-Control "public, max-age=604800";
     }
 
     location / {
@@ -43,3 +47,33 @@ server {
         proxy_read_timeout 60s;
     }
 }
+
+# ---------- 外网 secret path 示例（按需启用，替换 YOUR_16_HEX） ----------
+# 前端使用相对路径，必须保留末尾斜杠，否则静态资源和 API 会解析错。
+# server {
+#     listen 443 ssl http2;
+#     server_name example.com;
+#
+#     # ssl_certificate ...;
+#     # ssl_certificate_key ...;
+#
+#     client_max_body_size 2m;
+#
+#     location = /YOUR_16_HEX {
+#         return 301 /YOUR_16_HEX/;
+#     }
+#
+#     location /YOUR_16_HEX/ {
+#         proxy_pass http://lan_nav_upstream/;
+#         proxy_http_version 1.1;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#         proxy_read_timeout 60s;
+#     }
+#
+#     location / {
+#         return 404;
+#     }
+# }

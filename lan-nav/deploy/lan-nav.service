@@ -14,6 +14,8 @@ RestartSec=3
 # 安全加固
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectHome=true
+PrivateDevices=true
 
 [Install]
 WantedBy=multi-user.target

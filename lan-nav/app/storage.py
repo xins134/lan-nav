@@ -13,6 +13,8 @@ import yaml
 from pydantic import ValidationError
 
 from app.config import settings
+from app.archive import ArchiveError, build_export_zip, extract_import_zip
+from app.icons import persist_icon, prune_icons
 from app.models import Category, Link, NavigationData, SiteConfig, new_id
 
 logger = logging.getLogger("lan-nav.storage")
@@ -229,7 +231,7 @@ def _build_demo_data() -> NavigationData:
 
 
 def ensure_uncategorized(data: NavigationData) -> NavigationData:
-    """确保存在「未分类」分类。"""
+    """确保存在「未分类」分类，并把孤立链接归入其中。"""
     found = next((c for c in data.categories if c.id == UNCATEGORIZED_ID), None)
     if found is None:
         found = next((c for c in data.categories if c.name == UNCATEGORIZED_NAME), None)
@@ -245,14 +247,23 @@ def ensure_uncategorized(data: NavigationData) -> NavigationData:
                 )
             )
         else:
+            old_id = found.id
             found.id = UNCATEGORIZED_ID
             found.order = max(found.order, 9999)
+            if old_id != UNCATEGORIZED_ID:
+                for lk in data.links:
+                    if lk.category_id == old_id:
+                        lk.category_id = UNCATEGORIZED_ID
+    valid_ids = {c.id for c in data.categories}
+    for lk in data.links:
+        if lk.category_id not in valid_ids:
+            lk.category_id = UNCATEGORIZED_ID
     return data
 
 
 def _parse_yaml_text(text: str) -> NavigationData:
     try:
-        raw = yaml.safe_load(text)
+        raw = yaml.safe_load((text or "").lstrip("\ufeff"))
     except yaml.YAMLError as exc:
         raise StorageError("INVALID_DATA", f"YAML 解析失败: {exc}") from exc
     if raw is None:
@@ -277,6 +288,7 @@ def _dump_yaml(data: NavigationData) -> str:
         allow_unicode=True,
         default_flow_style=False,
         sort_keys=False,
+        width=10000,
     )
 
 
@@ -303,7 +315,10 @@ def _atomic_write(path: Path, content: str) -> None:
 
 
 def _read_file(path: Path) -> NavigationData:
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise StorageError("IO_ERROR", f"无法读取数据文件: {exc}") from exc
     return _parse_yaml_text(text)
 
 
@@ -313,6 +328,13 @@ def initialize_storage() -> NavigationData:
         data_file = settings.data_file
         backup = settings.data_backup
         example = settings.example_file
+        data_file.parent.mkdir(parents=True, exist_ok=True)
+        settings.icon_dir.mkdir(parents=True, exist_ok=True)
+        for tmp in data_file.parent.glob(data_file.name + ".*.tmp"):
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
         if not data_file.exists():
             if example.exists():
@@ -331,6 +353,11 @@ def initialize_storage() -> NavigationData:
         try:
             data = _read_file(data_file)
             logger.info("已加载导航数据: %s", data_file)
+            if any(
+                (lk.icon_url or "").startswith(("data:", "http://", "https://"))
+                for lk in data.links
+            ):
+                data = save_data(data)
             return data
         except StorageError as exc:
             logger.error("主 YAML 损坏: %s", exc.message)
@@ -352,13 +379,20 @@ def load_data() -> NavigationData:
     with _lock:
         if not settings.data_file.exists():
             return initialize_storage()
-        return _read_file(settings.data_file)
+        data = _read_file(settings.data_file)
+        if any(
+            (lk.icon_url or "").startswith(("data:", "http://", "https://"))
+            for lk in data.links
+        ):
+            return save_data(data)
+        return data
 
 
 def save_data(data: NavigationData) -> NavigationData:
     """校验并原子写入；写入前备份。"""
     with _lock:
         data = ensure_uncategorized(data)
+        data = _materialize_icons(data)
         # 再次校验
         data = NavigationData.model_validate(data.model_dump())
         content = _dump_yaml(data)
@@ -367,8 +401,57 @@ def save_data(data: NavigationData) -> NavigationData:
         data_file.parent.mkdir(parents=True, exist_ok=True)
         if data_file.exists():
             shutil.copy2(data_file, backup)
-        _atomic_write(data_file, content)
+        try:
+            _atomic_write(data_file, content)
+        except OSError as exc:
+            raise StorageError("IO_ERROR", f"无法写入数据文件: {exc}") from exc
         return data
+
+
+MAX_IMPORT_BYTES = 16 * 1024 * 1024
+
+
+def _materialize_icons(data: NavigationData) -> NavigationData:
+    for link in data.links:
+        try:
+            link.icon_url = persist_icon(link.id, link.icon_url)
+        except ValueError as exc:
+            raise StorageError("VALIDATION_ERROR", str(exc)) from exc
+    prune_icons({lk.id for lk in data.links if lk.icon_url})
+    return data
+
+
+def export_archive() -> bytes:
+    """导出 zip：navigation.yml + icon/*.png。"""
+    data = load_data()
+    return build_export_zip(data, settings.icon_dir)
+
+
+def import_yaml(text: str) -> NavigationData:
+    """校验并导入 YAML，覆盖当前数据。"""
+    raw = (text or "").strip()
+    if not raw:
+        raise StorageError("EMPTY_DATA", "配置文件内容为空")
+    if len(raw.encode("utf-8")) > MAX_IMPORT_BYTES:
+        raise StorageError("VALIDATION_ERROR", "配置文件过大（上限 16MB）")
+    data = _parse_yaml_text(raw)
+    return save_data(data)
+
+
+def import_payload(raw: bytes, filename: str = "") -> NavigationData:
+    """导入 zip 或 YAML 文本。"""
+    name = (filename or "").lower()
+    if raw.startswith(b"PK") or name.endswith(".zip"):
+        try:
+            text = extract_import_zip(raw, settings.icon_dir)
+        except ArchiveError as exc:
+            raise StorageError("VALIDATION_ERROR", exc.message) from exc
+        return import_yaml(text)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise StorageError("INVALID_DATA", "配置文件不是 UTF-8 文本或 zip") from exc
+    return import_yaml(text)
 
 
 def mutate(fn: Callable[[NavigationData], T]) -> T:

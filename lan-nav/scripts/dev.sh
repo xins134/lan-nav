@@ -33,7 +33,7 @@ pip install -q -r requirements.txt
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
-  echo "已创建 .env（可按需编辑 ADMIN_TOKEN）"
+  echo "已创建 .env"
 fi
 
 exec python run.py

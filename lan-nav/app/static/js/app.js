@@ -2,17 +2,18 @@
 (function () {
   "use strict";
 
-  const TOKEN_KEY = "lan-nav-admin-token";
   const THEME_KEY = "lan-nav-theme";
   const COLLAPSE_KEY = "lan-nav-collapsed";
   const SIZE_KEY = "lan-nav-card-size";
   const SIZE_OPTIONS = ["sm", "md", "lg"];
+  const SHAPE_KEY = "lan-nav-icon-shape";
+  const SHAPE_OPTIONS = ["rounded", "circle"];
 
   const state = {
     site: { title: "", subtitle: "", theme: "system" },
     categories: [],
     links: [],
-    meta: { admin_protected: false, uncategorized_id: "" },
+    meta: { uncategorized_id: "" },
     query: "",
   };
 
@@ -26,15 +27,6 @@
     el.textContent = message;
     wrap.appendChild(el);
     setTimeout(() => el.remove(), 3200);
-  }
-
-  function getToken() {
-    return sessionStorage.getItem(TOKEN_KEY) || "";
-  }
-
-  function setToken(token) {
-    if (token) sessionStorage.setItem(TOKEN_KEY, token);
-    else sessionStorage.removeItem(TOKEN_KEY);
   }
 
   function collapsedMap() {
@@ -88,7 +80,7 @@
 
   function letterAvatar(title, color) {
     const ch = (title || "?").trim().charAt(0).toUpperCase() || "?";
-    return `<span class="fav" style="background:${color || initialColor(title)}" aria-hidden="true">${escapeHtml(ch)}</span>`;
+    return `<span class="fav" style="background:${escapeHtml(color || initialColor(title))}" aria-hidden="true">${escapeHtml(ch)}</span>`;
   }
 
   function escapeHtml(str) {
@@ -99,17 +91,26 @@
       .replace(/"/g, "&quot;");
   }
 
+  function iconSrc(ref) {
+    const v = String(ref || "").trim();
+    if (!v) return "";
+    if (v.startsWith("data:") || v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/")) return v;
+    if (v.startsWith("icon/")) return "/" + v;
+    return v;
+  }
+
   function renderFav(link) {
     const color = link.color || initialColor(link.title);
-    if (link.icon && window.LucideIcons.has(link.icon)) {
-      return `<span class="fav lucide" style="background:${color}">${window.LucideIcons.svg(link.icon)}</span>`;
+    const custom = iconSrc(link.icon_url);
+    if (custom) {
+      return `<span class="fav fav-url"><img src="${escapeHtml(custom)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback-title="${escapeHtml(link.title)}" data-fallback-color="${escapeHtml(color)}" /></span>`;
     }
-    if (link.icon_url) {
-      return `<span class="fav" style="background:${color}"><img src="${escapeHtml(link.icon_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback-title="${escapeHtml(link.title)}" data-fallback-color="${escapeHtml(color)}" /></span>`;
+    if (link.icon && window.LucideIcons.has(link.icon)) {
+      return `<span class="fav lucide" style="background:${escapeHtml(color)}">${window.LucideIcons.svg(link.icon)}</span>`;
     }
     const ico = faviconCandidate(link.url);
     if (ico) {
-      return `<span class="fav" style="background:${color}"><img src="${escapeHtml(ico)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback-title="${escapeHtml(link.title)}" data-fallback-color="${escapeHtml(color)}" /></span>`;
+      return `<span class="fav" style="background:${escapeHtml(color)}"><img src="${escapeHtml(ico)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback-title="${escapeHtml(link.title)}" data-fallback-color="${escapeHtml(color)}" /></span>`;
     }
     return letterAvatar(link.title, color);
   }
@@ -118,11 +119,7 @@
     const opts = options || {};
     const headers = Object.assign({ Accept: "application/json" }, opts.headers || {});
     if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-    if (opts.auth) {
-      const token = getToken();
-      if (token) headers["X-Admin-Token"] = token;
-    }
-    const res = await fetch(path, {
+    const res = await fetch(String(path || "").replace(/^\//, ""), {
       method: opts.method || "GET",
       headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -185,19 +182,23 @@
     return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
   }
 
+  function syncSegButtons(rootSel, dataAttr, value) {
+    $$(rootSel + " .size-btn").forEach((btn) => {
+      const on = btn.getAttribute(dataAttr) === value;
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.classList.toggle("is-active", on);
+    });
+  }
+
   function applyTheme() {
     const theme = resolveTheme();
     document.documentElement.setAttribute("data-theme", theme);
-    const btn = $("#themeToggle");
-    if (btn) {
-      btn.innerHTML = window.LucideIcons.svg(theme === "dark" ? "sun" : "moon");
-      btn.setAttribute("aria-label", theme === "dark" ? "切换到浅色" : "切换到深色");
-    }
+    syncSegButtons("#themeSwitch", "data-theme-choice", theme);
   }
 
-  function cycleTheme() {
-    const cur = resolveTheme();
-    localStorage.setItem(THEME_KEY, cur === "dark" ? "light" : "dark");
+  function setTheme(theme) {
+    if (theme !== "light" && theme !== "dark") return;
+    localStorage.setItem(THEME_KEY, theme);
     applyTheme();
   }
 
@@ -210,89 +211,19 @@
     const s = SIZE_OPTIONS.includes(size) ? size : "md";
     document.documentElement.setAttribute("data-card-size", s);
     localStorage.setItem(SIZE_KEY, s);
-    $$("#sizeSwitch .size-btn").forEach((btn) => {
-      const on = btn.getAttribute("data-size") === s;
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
-      btn.classList.toggle("is-active", on);
-    });
+    syncSegButtons("#sizeSwitch", "data-size", s);
   }
 
-  function updateSecurityBanner() {
-    const banner = $("#securityBanner");
-    const protected_ = state.meta.admin_protected;
-    if (!protected_) {
-      banner.classList.remove("hidden");
-      banner.innerHTML =
-        '<span data-icon="alert"></span><span>编辑保护未启用，仅建议在可信局域网使用。若暴露公网，请配置 ADMIN_TOKEN，并配合 VPN / Nginx Basic Auth 等访问控制。</span>';
-      hydrateIcons(banner);
-    } else {
-      banner.classList.add("hidden");
-      banner.innerHTML = "";
-    }
-    $("#footerHint").textContent = protected_
-      ? "写入接口已启用 Token 保护"
-      : "写入接口未启用 Token";
+  function resolveIconShape() {
+    const saved = localStorage.getItem(SHAPE_KEY);
+    return SHAPE_OPTIONS.includes(saved) ? saved : "rounded";
   }
 
-  async function verifyToken() {
-    await api("/api/auth/verify", { auth: true });
-  }
-
-  async function ensureAuth() {
-    if (!state.meta.admin_protected) return true;
-    if (getToken()) {
-      try {
-        await verifyToken();
-        return true;
-      } catch (e) {
-        if (e.status === 401 || e.code === "UNAUTHORIZED") setToken("");
-        else {
-          toast(e.message, true);
-          return false;
-        }
-      }
-    }
-    return promptToken();
-  }
-
-  async function withAuth(fn) {
-    const ok = await ensureAuth();
-    if (!ok) return;
-    return fn();
-  }
-
-  function promptToken() {
-    return new Promise((resolve) => {
-      openModal({
-        title: "输入管理 Token",
-        body: `
-          <div class="field">
-            <label for="tokenInput">ADMIN_TOKEN</label>
-            <input id="tokenInput" type="password" autocomplete="current-password" placeholder="关闭浏览器后失效" />
-            <p class="hint">Token 仅保存在本机 sessionStorage，不会写入服务端日志。</p>
-          </div>`,
-        confirmText: "确认",
-        onConfirm: async () => {
-          const val = ($("#tokenInput").value || "").trim();
-          if (!val) {
-            toast("请输入 Token", true);
-            return false;
-          }
-          setToken(val);
-          try {
-            await verifyToken();
-            resolve(true);
-            return true;
-          } catch (e) {
-            setToken("");
-            toast(e.status === 401 ? "Token 无效" : e.message, true);
-            return false;
-          }
-        },
-        onCancel: () => resolve(false),
-      });
-      setTimeout(() => $("#tokenInput")?.focus(), 50);
-    });
+  function applyIconShape(shape) {
+    const s = SHAPE_OPTIONS.includes(shape) ? shape : "rounded";
+    document.documentElement.setAttribute("data-icon-shape", s);
+    localStorage.setItem(SHAPE_KEY, s);
+    syncSegButtons("#iconShapeSwitch", "data-shape", s);
   }
 
   let modalOpts = null;
@@ -319,8 +250,16 @@
         btn.className = "btn " + (b.className || "");
         btn.textContent = b.text;
         btn.addEventListener("click", async () => {
-          const ok = await b.onClick();
-          if (ok !== false) closeModal(true);
+          if (btn.disabled) return;
+          btn.disabled = true;
+          try {
+            const ok = await b.onClick();
+            if (ok !== false) closeModal(true);
+          } catch (e) {
+            toast((e && e.message) || "操作失败", true);
+          } finally {
+            btn.disabled = false;
+          }
         });
         foot.appendChild(btn);
       });
@@ -331,21 +270,36 @@
       ok.className = "btn btn-primary";
       ok.textContent = opts.confirmText || "确定";
       ok.addEventListener("click", async () => {
+        if (ok.disabled) return;
         if (!opts.onConfirm) {
           closeModal(true);
           return;
         }
-        const result = await opts.onConfirm();
-        if (result !== false) closeModal(true);
+        ok.disabled = true;
+        try {
+          const result = await opts.onConfirm();
+          if (result !== false) closeModal(true);
+        } catch (e) {
+          toast((e && e.message) || "操作失败", true);
+        } finally {
+          ok.disabled = false;
+        }
       });
       foot.appendChild(ok);
     }
     backdrop.hidden = false;
     backdrop.classList.remove("hidden");
     hydrateIcons(backdrop);
+    if ($("#lIconData")) bindIconPicker();
   }
 
+  let iconCropCleanup = null;
+
   function closeModal(confirmed) {
+    if (iconCropCleanup) {
+      iconCropCleanup();
+      iconCropCleanup = null;
+    }
     const backdrop = $("#modalBackdrop");
     backdrop.classList.add("hidden");
     backdrop.hidden = true;
@@ -353,8 +307,183 @@
     modalOpts = null;
   }
 
+  function bindIconPicker() {
+    const preview = $("#lIconPreview");
+    const dataInput = $("#lIconData");
+    const fileInput = $("#lIconFile");
+    const pickBtn = $("#lIconPick");
+    const clearBtn = $("#lIconClear");
+    const cropWrap = $("#lIconCropWrap");
+    const cropBox = $("#lIconCrop");
+    const cropImg = $("#lIconCropImg");
+    const zoomInput = $("#lIconZoom");
+    const cropOk = $("#lIconCropOk");
+    const cropCancel = $("#lIconCropCancel");
+    if (!preview || !dataInput || !fileInput || !cropBox || !cropImg) return;
+
+    const CROP_OUT = 128;
+    let objectUrl = "";
+    let zoom = 1;
+    let ox = 0;
+    let oy = 0;
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+    let cropOpen = false;
+
+    function revoke() {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = "";
+      }
+    }
+
+    iconCropCleanup = () => {
+      cropOpen = false;
+      dragging = false;
+      revoke();
+    };
+
+    function setPreview(src) {
+      if (src) {
+        preview.innerHTML = `<img alt="" src="${escapeHtml(src)}" />`;
+        if (clearBtn) clearBtn.hidden = false;
+      } else {
+        preview.innerHTML = `<span class="icon-picker-empty">无</span>`;
+        if (clearBtn) clearBtn.hidden = true;
+      }
+    }
+
+    function hideCrop() {
+      cropOpen = false;
+      dragging = false;
+      cropWrap.classList.add("hidden");
+      cropWrap.hidden = true;
+      revoke();
+      cropImg.removeAttribute("src");
+    }
+
+    function layoutCrop() {
+      if (!cropOpen || !cropImg.naturalWidth) return;
+      const bw = cropBox.clientWidth;
+      const bh = cropBox.clientHeight;
+      const nw = cropImg.naturalWidth;
+      const nh = cropImg.naturalHeight;
+      const base = Math.max(bw / nw, bh / nh);
+      const s = base * zoom;
+      const dw = nw * s;
+      const dh = nh * s;
+      ox = Math.min(0, Math.max(bw - dw, ox));
+      oy = Math.min(0, Math.max(bh - dh, oy));
+      cropImg.style.width = dw + "px";
+      cropImg.style.height = dh + "px";
+      cropImg.style.left = ox + "px";
+      cropImg.style.top = oy + "px";
+    }
+
+    function openCrop(file) {
+      if (!file || !file.type.startsWith("image/")) {
+        toast("请选择图片文件", true);
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        toast("图片过大（上限 8MB）", true);
+        return;
+      }
+      revoke();
+      objectUrl = URL.createObjectURL(file);
+      zoom = 1;
+      if (zoomInput) zoomInput.value = "1";
+      cropImg.onload = () => {
+        const bw = cropBox.clientWidth;
+        const bh = cropBox.clientHeight;
+        const nw = cropImg.naturalWidth;
+        const nh = cropImg.naturalHeight;
+        const base = Math.max(bw / nw, bh / nh);
+        const dw = nw * base;
+        const dh = nh * base;
+        ox = (bw - dw) / 2;
+        oy = (bh - dh) / 2;
+        cropOpen = true;
+        layoutCrop();
+      };
+      cropImg.onerror = () => {
+        toast("无法读取该图片", true);
+        hideCrop();
+      };
+      cropWrap.classList.remove("hidden");
+      cropWrap.hidden = false;
+      cropImg.src = objectUrl;
+    }
+
+    pickBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (file) openCrop(file);
+    });
+    clearBtn.addEventListener("click", () => {
+      dataInput.value = "";
+      setPreview("");
+      hideCrop();
+    });
+    if (zoomInput) {
+      zoomInput.addEventListener("input", () => {
+        zoom = Number(zoomInput.value) || 1;
+        layoutCrop();
+      });
+    }
+    cropCancel.addEventListener("click", hideCrop);
+    cropOk.addEventListener("click", () => {
+      if (!cropImg.naturalWidth) return;
+      const bw = cropBox.clientWidth;
+      const bh = cropBox.clientHeight;
+      const nw = cropImg.naturalWidth;
+      const nh = cropImg.naturalHeight;
+      const base = Math.max(bw / nw, bh / nh);
+      const s = base * zoom;
+      const sx = -ox / s;
+      const sy = -oy / s;
+      const sw = bw / s;
+      const sh = bh / s;
+      const canvas = document.createElement("canvas");
+      canvas.width = CROP_OUT;
+      canvas.height = CROP_OUT;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(cropImg, sx, sy, sw, sh, 0, 0, CROP_OUT, CROP_OUT);
+      const dataUrl = canvas.toDataURL("image/png");
+      dataInput.value = dataUrl;
+      setPreview(dataUrl);
+      hideCrop();
+    });
+
+    cropBox.addEventListener("pointerdown", (e) => {
+      if (!cropOpen) return;
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      cropBox.setPointerCapture(e.pointerId);
+    });
+    cropBox.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      ox += e.clientX - lastX;
+      oy += e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      layoutCrop();
+    });
+    const stopDrag = () => {
+      dragging = false;
+    };
+    cropBox.addEventListener("pointerup", stopDrag);
+    cropBox.addEventListener("pointercancel", stopDrag);
+  }
+
   function categoryForm(cat) {
-    const c = cat || { name: "", description: "", icon: "folder", color: "#8b5cf6" };
+    const c = cat || { name: "", description: "" };
     return `
       <div class="field">
         <label for="fName">名称</label>
@@ -364,17 +493,6 @@
         <label for="fDesc">描述</label>
         <input id="fDesc" value="${escapeHtml(c.description || "")}" maxlength="200" />
       </div>
-      <div class="field-row">
-        <div class="field">
-          <label for="fIcon">Lucide 图标名</label>
-          <input id="fIcon" value="${escapeHtml(c.icon || "folder")}" placeholder="folder" list="iconList" />
-        </div>
-        <div class="field">
-          <label for="fColor">颜色</label>
-          <input id="fColor" type="color" value="${escapeHtml((c.color || "#8b5cf6").slice(0, 7))}" />
-        </div>
-      </div>
-      <datalist id="iconList">${window.LucideIcons.names.map((n) => `<option value="${n}"></option>`).join("")}</datalist>
     `;
   }
 
@@ -418,19 +536,45 @@
         <label for="lTags">标签（逗号分隔）</label>
         <input id="lTags" value="${escapeHtml((l.tags || []).join(", "))}" />
       </div>
-      <div class="field-row">
-        <div class="field">
-          <label for="lIconUrl">图标 URL（可选）</label>
-          <input id="lIconUrl" value="${escapeHtml(l.icon_url || "")}" />
+      <div class="field">
+        <label>图标（可选）</label>
+        <div class="icon-picker">
+          <div class="icon-picker-preview" id="lIconPreview">${
+            l.icon_url
+              ? `<img alt="" src="${escapeHtml(iconSrc(l.icon_url))}" />`
+              : `<span class="icon-picker-empty">无</span>`
+          }</div>
+          <div class="icon-picker-actions">
+            <button type="button" class="btn btn-ghost btn-sm" id="lIconPick">选择图片</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="lIconClear"${l.icon_url ? "" : " hidden"}>清除</button>
+          </div>
+          <input type="file" id="lIconFile" accept="image/*" hidden />
+          <input type="hidden" id="lIconData" value="${escapeHtml(l.icon_url || "")}" />
         </div>
+        <p class="hint">从本地选择图片后裁剪为正方形图标</p>
+      </div>
+      <div class="icon-crop-wrap hidden" id="lIconCropWrap" hidden>
+        <div class="icon-crop" id="lIconCrop" aria-label="拖动调整裁剪位置">
+          <img id="lIconCropImg" alt="" />
+        </div>
+        <label class="icon-crop-zoom">
+          <span>缩放</span>
+          <input type="range" id="lIconZoom" min="1" max="3" step="0.02" value="1" />
+        </label>
+        <div class="icon-picker-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="lIconCropOk">完成裁剪</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="lIconCropCancel">取消</button>
+        </div>
+      </div>
+      <div class="field-row">
         <div class="field">
           <label for="lIcon">Lucide 图标名</label>
           <input id="lIcon" value="${escapeHtml(l.icon || "")}" list="iconList" />
         </div>
-      </div>
-      <div class="field">
-        <label for="lColor">主题色</label>
-        <input id="lColor" type="color" value="${escapeHtml((l.color || "#6366f1").slice(0, 7))}" />
+        <div class="field">
+          <label for="lColor">主题色</label>
+          <input id="lColor" type="color" value="${escapeHtml((l.color || "#6366f1").slice(0, 7))}" />
+        </div>
       </div>
       <div class="field field-hidden" aria-hidden="true">
         <label for="lStatus">状态</label>
@@ -449,8 +593,6 @@
     return {
       name: $("#fName").value.trim(),
       description: $("#fDesc").value.trim(),
-      icon: $("#fIcon").value.trim() || "folder",
-      color: $("#fColor").value,
     };
   }
 
@@ -461,7 +603,7 @@
       description: $("#lDesc").value.trim(),
       category_id: $("#lCat").value,
       tags: $("#lTags").value,
-      icon_url: $("#lIconUrl").value.trim(),
+      icon_url: $("#lIconData") ? $("#lIconData").value.trim() : "",
       icon: $("#lIcon").value.trim(),
       color: $("#lColor").value,
       status: $("#lStatus").value,
@@ -469,8 +611,253 @@
     };
   }
 
+  /* ---------------- 排序模式（拖动分组 / 卡片） ---------------- */
+
+  const SORT_LABEL_IDLE = "编辑排序";
+  const SORT_LABEL_ACTIVE = "保存排序";
+  const DRAG_THRESHOLD = 6;
+
+  let sortMode = false;
+  let dragCtx = null;
+  let dragScrollTimer = 0;
+  let dragScrollDelta = 0;
+
+  function syncSortButton() {
+    const btn = $("#btnSortToggle");
+    if (!btn) return;
+    btn.setAttribute("aria-pressed", sortMode ? "true" : "false");
+    btn.classList.toggle("is-active", sortMode);
+    const icon = $(".sort-toggle-icon", btn);
+    if (icon) icon.innerHTML = window.LucideIcons.svg(sortMode ? "check" : "grip");
+    const label = $(".sort-toggle-label", btn);
+    if (label) label.textContent = sortMode ? SORT_LABEL_ACTIVE : SORT_LABEL_IDLE;
+    btn.setAttribute(
+      "title",
+      sortMode ? "保存当前顺序" : "进入排序模式：拖动分组与卡片调整顺序"
+    );
+  }
+
+  function setSortMode(active, opts) {
+    const options = opts || {};
+    sortMode = !!active;
+    document.documentElement.classList.toggle("sort-mode", sortMode);
+    if (!sortMode && dragCtx) endDrag();
+    if (sortMode) {
+      state.query = "";
+      hideCtxMenu();
+      render();
+    }
+    syncSortButton();
+    if (!options.silent) {
+      toast(
+        sortMode
+          ? "拖动分组标题或卡片右侧的手柄调整顺序，完成后点「保存排序」"
+          : "已退出排序模式"
+      );
+    }
+  }
+
+  function collectOrder() {
+    const sections = $$("#main > .category");
+    const catIds = sections.map((sec) => sec.getAttribute("data-cat-id")).filter(Boolean);
+    const linkIds = [];
+    sections.forEach((sec) => {
+      $$(".link-card", sec).forEach((card) => {
+        const id = card.getAttribute("data-link-id");
+        if (id) linkIds.push(id);
+      });
+    });
+    return { catIds, linkIds };
+  }
+
+  async function saveSortOrder() {
+    const btn = $("#btnSortToggle");
+    const { catIds, linkIds } = collectOrder();
+    if (btn) btn.disabled = true;
+    try {
+      if (catIds.length > 1) {
+        await api("/api/categories/reorder", { method: "POST", body: { ids: catIds } });
+      }
+      if (linkIds.length > 1) {
+        await api("/api/links/reorder", { method: "POST", body: { ids: linkIds } });
+      }
+      await reload();
+      setSortMode(false, { silent: true });
+      if (btn) btn.classList.remove("is-dirty");
+      toast("排序已保存");
+    } catch (e) {
+      toast("保存失败：" + e.message, true);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function beginDrag(e) {
+    if (!sortMode || dragCtx) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+
+    const target = e.target;
+    const handle = target && target.closest ? target.closest(".drag-handle") : null;
+    const card = target && target.closest ? target.closest(".link-card") : null;
+    // 鼠标可直接拖动卡片；触摸必须从手柄开始，避免和页面滚动冲突
+    if (!handle && !(card && e.pointerType === "mouse")) return;
+
+    let el = null;
+    let container = null;
+    let itemSelector = "";
+    let kind = "";
+    if (handle && handle.getAttribute("data-drag") === "cat") {
+      el = handle.closest(".category");
+      container = $("#main");
+      itemSelector = ".category";
+      kind = "cat";
+    } else if (card) {
+      el = card;
+      container = card.parentElement;
+      itemSelector = ".link-card";
+      kind = "link";
+    }
+    if (!el || !container || !container.children.length) return;
+    if (el.closest("#pinnedSection")) return;
+
+    // 阻止 <a> 的原生 HTML5 拖拽，否则浏览器会在移动时转入 native drag，
+    // 从而中断 pointermove，卡片无法排序（分组按钮不受影响）。
+    if (e.cancelable) e.preventDefault();
+
+    dragCtx = {
+      el,
+      container,
+      itemSelector,
+      kind,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+    };
+    window.addEventListener("pointermove", onDragMove, { passive: false });
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+  }
+
+  function onDragMove(e) {
+    const c = dragCtx;
+    if (!c || e.pointerId !== c.pointerId) return;
+    if (!c.moved) {
+      const dx = e.clientX - c.startX;
+      const dy = e.clientY - c.startY;
+      if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+      c.moved = true;
+      c.el.classList.add("is-dragging");
+      document.documentElement.classList.add("is-drag-active");
+      if (c.el.setPointerCapture) {
+        try {
+          c.el.setPointerCapture(e.pointerId);
+        } catch (_) {}
+      }
+    }
+    e.preventDefault();
+    placeDragged(e.clientX, e.clientY);
+    autoScroll(e.clientY);
+  }
+
+  function placeDragged(x, y) {
+    const c = dragCtx;
+    if (!c) return;
+    const siblings = Array.from(c.container.children).filter(
+      (n) => n !== c.el && n.matches(c.itemSelector)
+    );
+    if (!siblings.length) return;
+
+    if (c.kind === "cat") {
+      let ref = null;
+      for (const s of siblings) {
+        const r = s.getBoundingClientRect();
+        if (y < r.top + r.height / 2) {
+          ref = s;
+          break;
+        }
+      }
+      if (ref) {
+        if (c.el.nextElementSibling !== ref) c.container.insertBefore(c.el, ref);
+      } else if (c.container.lastElementChild !== c.el) {
+        c.container.appendChild(c.el);
+      }
+      return;
+    }
+
+    let best = null;
+    let bestDist = Infinity;
+    for (const s of siblings) {
+      const r = s.getBoundingClientRect();
+      const dx = x - (r.left + r.width / 2);
+      const dy = y - (r.top + r.height / 2);
+      const d = dx * dx + dy * dy;
+      if (d < bestDist) {
+        bestDist = d;
+        best = s;
+      }
+    }
+    if (!best) return;
+    const rect = best.getBoundingClientRect();
+    if (x > rect.left + rect.width / 2) {
+      if (best.nextElementSibling !== c.el) best.after(c.el);
+    } else if (best.previousElementSibling !== c.el) {
+      best.before(c.el);
+    }
+  }
+
+  function autoScroll(y) {
+    const margin = 96;
+    let delta = 0;
+    if (y < margin) delta = -Math.min(28, Math.ceil((margin - y) / 5));
+    else if (y > window.innerHeight - margin) {
+      delta = Math.min(28, Math.ceil((y - (window.innerHeight - margin)) / 5));
+    }
+    dragScrollDelta = delta;
+    if (!delta) {
+      stopAutoScroll();
+      return;
+    }
+    if (dragScrollTimer) return;
+    dragScrollTimer = setInterval(() => {
+      if (dragScrollDelta) window.scrollBy(0, dragScrollDelta);
+    }, 40);
+  }
+
+  function stopAutoScroll() {
+    if (dragScrollTimer) {
+      clearInterval(dragScrollTimer);
+      dragScrollTimer = 0;
+    }
+    dragScrollDelta = 0;
+  }
+
+  function endDrag(e) {
+    const c = dragCtx;
+    if (!c) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== c.pointerId) return;
+    if (c.moved) {
+      c.el.classList.remove("is-dragging");
+      document.documentElement.classList.remove("is-drag-active");
+      if (c.el.releasePointerCapture) {
+        try {
+          c.el.releasePointerCapture(c.pointerId);
+        } catch (_) {}
+      }
+      const btn = $("#btnSortToggle");
+      if (btn) btn.classList.add("is-dirty");
+    }
+    dragCtx = null;
+    stopAutoScroll();
+    window.removeEventListener("pointermove", onDragMove);
+    window.removeEventListener("pointerup", endDrag);
+    window.removeEventListener("pointercancel", endDrag);
+  }
+
   function renderLinkCard(link) {
+    const handle = `<span class="drag-handle" data-drag="link" aria-hidden="true">${window.LucideIcons.svg("grip")}</span>`;
     return `<a class="link-card" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" data-link-id="${escapeHtml(link.id)}" style="--card-accent:${escapeHtml(link.color || "#6366f1")}">
+      ${handle}
       <div class="link-top">${renderFav(link)}
         <div>
           <h3 class="link-title">${escapeHtml(link.title)}</h3>
@@ -485,7 +872,6 @@
     const title = state.site.title || "局域网导航";
     document.title = title;
     $("#siteTitle").textContent = title;
-    $("#siteSubtitle").textContent = state.site.subtitle || "";
 
     const catById = Object.fromEntries(state.categories.map((c) => [c.id, c]));
     const collapsed = collapsedMap();
@@ -521,16 +907,18 @@
       .map((c) => {
         const links = filteredLinks
           .filter((lk) => lk.category_id === c.id)
-          .sort((a, b) => Number(!a.pinned) - Number(!b.pinned) || a.order - b.order);
+          .sort((a, b) => a.order - b.order || String(a.title).localeCompare(String(b.title)));
         const isCollapsed = !!collapsed[c.id];
         return `<section class="category ${isCollapsed ? "collapsed" : ""}" id="cat-${escapeHtml(c.id)}" data-cat-id="${escapeHtml(c.id)}">
           <div class="category-panel" data-cat-panel="${escapeHtml(c.id)}">
             <div class="category-head">
-              <span class="cat-icon" style="background:${escapeHtml(c.color || "#64748b")}">${window.LucideIcons.svg(c.icon || "folder")}</span>
               <div class="cat-meta">
                 <h2>${escapeHtml(c.name)}</h2>
                 <p>${escapeHtml(c.description || "")} · ${links.length} 个链接</p>
               </div>
+              <button type="button" class="drag-handle drag-handle-cat" data-drag="cat" aria-label="拖动分组排序">
+                ${window.LucideIcons.svg("grip")}
+              </button>
               <button type="button" class="cat-toggle" data-act="toggle-cat" data-id="${escapeHtml(c.id)}" aria-expanded="${!isCollapsed}" aria-label="折叠分类">
                 ${window.LucideIcons.svg(isCollapsed ? "chevron-down" : "chevron-up")}
               </button>
@@ -592,7 +980,6 @@
     state.categories = data.categories;
     state.links = data.links;
     state.meta = data.meta || state.meta;
-    updateSecurityBanner();
     applyTheme();
     render();
   }
@@ -606,132 +993,121 @@
   }
 
   function openAddCategory() {
-    return withAuth(() => {
-      openModal({
-        title: "新增分类",
-        body: categoryForm(),
-        confirmText: "创建",
-        onConfirm: async () => {
-          try {
-            await api("/api/categories", { method: "POST", body: readCategoryForm(), auth: true });
-            await reload();
-            toast("分类已创建");
-            return true;
-          } catch (e) {
-            toast(e.message, true);
-            return false;
-          }
-        },
-      });
+    openModal({
+      title: "新增分类",
+      body: categoryForm(),
+      confirmText: "创建",
+      onConfirm: async () => {
+        try {
+          await api("/api/categories", { method: "POST", body: readCategoryForm() });
+          await reload();
+          toast("分类已创建");
+          return true;
+        } catch (e) {
+          toast(e.message, true);
+          return false;
+        }
+      },
     });
   }
 
   function openAddLink(categoryId) {
-    return withAuth(() => {
-      const base = {
-        title: "",
-        url: "",
-        description: "",
-        category_id: categoryId || state.meta.uncategorized_id,
-        tags: [],
-        icon_url: "",
-        icon: "",
-        color: "#6366f1",
-        pinned: false,
-        status: "normal",
-      };
-      openModal({
-        title: "新增链接",
-        body: linkForm(base),
-        confirmText: "创建",
-        onConfirm: async () => {
-          try {
-            await api("/api/links", { method: "POST", body: readLinkForm(), auth: true });
-            await reload();
-            toast("链接已创建");
-            return true;
-          } catch (e) {
-            toast(e.message, true);
-            return false;
-          }
-        },
-      });
+    const base = {
+      title: "",
+      url: "",
+      description: "",
+      category_id: categoryId || state.meta.uncategorized_id,
+      tags: [],
+      icon_url: "",
+      icon: "",
+      color: "#6366f1",
+      pinned: false,
+      status: "normal",
+    };
+    openModal({
+      title: "新增链接",
+      body: linkForm(base),
+      confirmText: "创建",
+      onConfirm: async () => {
+        try {
+          await api("/api/links", { method: "POST", body: readLinkForm() });
+          await reload();
+          toast("链接已创建");
+          return true;
+        } catch (e) {
+          toast(e.message, true);
+          return false;
+        }
+      },
     });
   }
 
   function openEditLink(id) {
     const link = findLink(id);
     if (!link) return;
-    return withAuth(() => {
-      openModal({
-        title: "编辑链接",
-        body: linkForm(link),
-        confirmText: "保存",
-        onConfirm: async () => {
-          try {
-            await api(`/api/links/${id}`, { method: "PUT", body: readLinkForm(), auth: true });
-            await reload();
-            toast("已保存");
-            return true;
-          } catch (e) {
-            toast(e.message, true);
-            return false;
-          }
-        },
-      });
+    openModal({
+      title: "编辑链接",
+      body: linkForm(link),
+      confirmText: "保存",
+      onConfirm: async () => {
+        try {
+          await api(`/api/links/${id}`, { method: "PUT", body: readLinkForm() });
+          await reload();
+          toast("已保存");
+          return true;
+        } catch (e) {
+          toast(e.message, true);
+          return false;
+        }
+      },
     });
   }
 
   function openDeleteLink(id) {
     const link = findLink(id);
-    return withAuth(() => {
-      openModal({
-        title: "删除链接",
-        body: `<p>确定删除「${escapeHtml(link ? link.title : id)}」？此操作不可撤销。</p>`,
-        confirmText: "删除",
-        onConfirm: async () => {
-          try {
-            await api(`/api/links/${id}`, { method: "DELETE", auth: true });
-            await reload();
-            toast("已删除");
-            return true;
-          } catch (e) {
-            toast(e.message, true);
-            return false;
-          }
-        },
-      });
-      setTimeout(() => {
-        const btns = $$("#modalFoot .btn-primary");
-        if (btns[0]) btns[0].classList.add("btn-danger");
-      }, 0);
+    openModal({
+      title: "删除链接",
+      body: `<p>确定删除「${escapeHtml(link ? link.title : id)}」？此操作不可撤销。</p>`,
+      confirmText: "删除",
+      onConfirm: async () => {
+        try {
+          await api(`/api/links/${id}`, { method: "DELETE" });
+          await reload();
+          toast("已删除");
+          return true;
+        } catch (e) {
+          toast(e.message, true);
+          return false;
+        }
+      },
     });
+    setTimeout(() => {
+      const btns = $$("#modalFoot .btn-primary");
+      if (btns[0]) btns[0].classList.add("btn-danger");
+    }, 0);
   }
 
   function openEditCategory(id) {
     const cat = findCat(id);
     if (!cat) return;
-    return withAuth(() => {
-      openModal({
-        title: "编辑分类",
-        body: categoryForm(cat),
-        confirmText: "保存",
-        onConfirm: async () => {
-          try {
-            await api(`/api/categories/${id}`, {
-              method: "PUT",
-              body: readCategoryForm(),
-              auth: true,
-            });
-            await reload();
-            toast("分类已更新");
-            return true;
-          } catch (e) {
-            toast(e.message, true);
-            return false;
-          }
-        },
-      });
+    openModal({
+      title: "编辑分类",
+      body: categoryForm(cat),
+      confirmText: "保存",
+      onConfirm: async () => {
+        try {
+          await api(`/api/categories/${id}`, {
+            method: "PUT",
+            body: readCategoryForm(),
+          });
+          await reload();
+          toast("分类已更新");
+          return true;
+        } catch (e) {
+          toast(e.message, true);
+          return false;
+        }
+      },
     });
   }
 
@@ -741,51 +1117,47 @@
       return;
     }
     const cat = findCat(id);
-    return withAuth(() => {
-      openModal({
-        title: "删除分类",
-        body: `<p>确定删除分类「${escapeHtml(cat ? cat.name : id)}」？</p>
-          <p class="hint">请选择链接处理方式：</p>`,
-        confirmText: false,
-        extraButtons: [
-          {
-            text: "删除分类及全部链接",
-            className: "btn-danger",
-            onClick: async () => {
-              try {
-                await api(`/api/categories/${id}?action=delete_links`, {
-                  method: "DELETE",
-                  auth: true,
-                });
-                await reload();
-                toast("分类已删除");
-                return true;
-              } catch (e) {
-                toast(e.message, true);
-                return false;
-              }
-            },
+    openModal({
+      title: "删除分类",
+      body: `<p>确定删除分类「${escapeHtml(cat ? cat.name : id)}」？</p>
+        <p class="hint">请选择链接处理方式：</p>`,
+      confirmText: false,
+      extraButtons: [
+        {
+          text: "删除分类及全部链接",
+          className: "btn-danger",
+          onClick: async () => {
+            try {
+              await api(`/api/categories/${id}?action=delete_links`, {
+                method: "DELETE",
+              });
+              await reload();
+              toast("分类已删除");
+              return true;
+            } catch (e) {
+              toast(e.message, true);
+              return false;
+            }
           },
-          {
-            text: "链接移至未分类",
-            className: "btn-primary",
-            onClick: async () => {
-              try {
-                await api(`/api/categories/${id}?action=move_uncategorized`, {
-                  method: "DELETE",
-                  auth: true,
-                });
-                await reload();
-                toast("分类已删除，链接已迁移");
-                return true;
-              } catch (e) {
-                toast(e.message, true);
-                return false;
-              }
-            },
+        },
+        {
+          text: "链接移至未分类",
+          className: "btn-primary",
+          onClick: async () => {
+            try {
+              await api(`/api/categories/${id}?action=move_uncategorized`, {
+                method: "DELETE",
+              });
+              await reload();
+              toast("分类已删除，链接已迁移");
+              return true;
+            } catch (e) {
+              toast(e.message, true);
+              return false;
+            }
           },
-        ],
-      });
+        },
+      ],
     });
   }
 
@@ -982,6 +1354,7 @@
     }
 
     function onStart(e) {
+      if (sortMode) return;
       if (e.touches && e.touches.length !== 1) return;
       const t = e.touches ? e.touches[0] : e;
       const hit = resolveCtxTarget(e.target);
@@ -1050,17 +1423,107 @@
     }
   }
 
+  async function exportConfig() {
+    try {
+      const res = await fetch("api/export");
+      if (!res.ok) {
+        let msg = `导出失败 (${res.status})`;
+        try {
+          const json = await res.json();
+          if (json && json.error && json.error.message) msg = json.error.message;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "navigation.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast("配置已导出");
+    } catch (e) {
+      toast("导出失败：" + e.message, true);
+    }
+  }
+
+  function openImportConfirm(file) {
+    if (!file) return;
+    const name = file.name || "所选文件";
+    openModal({
+      title: "导入配置",
+      body: `<p>将用 <strong>${escapeHtml(name)}</strong> 覆盖当前全部导航数据。</p><p class="modal-hint">此操作不可撤销，建议先导出备份。</p>`,
+      confirmText: "确认导入",
+      onConfirm: async () => {
+        try {
+          if (file.size > 16 * 1024 * 1024) {
+            toast("配置文件过大（上限 16MB）", true);
+            return false;
+          }
+          const fd = new FormData();
+          fd.append("file", file);
+          const res = await fetch("api/import", {
+            method: "POST",
+            headers: { Accept: "application/json" },
+            body: fd,
+          });
+          let json = null;
+          try {
+            json = await res.json();
+          } catch {
+            json = null;
+          }
+          if (!res.ok || !json || json.success === false) {
+            const msg = (json && json.error && json.error.message) || `导入失败 (${res.status})`;
+            throw new Error(msg);
+          }
+          const result = json.data;
+          await reload();
+          toast(`已导入 ${result.categories} 个分类、${result.links} 条链接`);
+          return true;
+        } catch (e) {
+          toast("导入失败：" + e.message, true);
+          return false;
+        }
+      },
+    });
+  }
+
   function bindGlobal() {
-    $("#themeToggle").addEventListener("click", cycleTheme);
+    $("#themeSwitch").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-theme-choice]");
+      if (!btn) return;
+      setTheme(btn.getAttribute("data-theme-choice"));
+    });
     $("#sizeSwitch").addEventListener("click", (e) => {
       const btn = e.target.closest(".size-btn");
       if (!btn) return;
       applyCardSize(btn.getAttribute("data-size"));
     });
+    $("#iconShapeSwitch").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-shape]");
+      if (!btn) return;
+      applyIconShape(btn.getAttribute("data-shape"));
+    });
     $("#btnAddCategory").addEventListener("click", () => openAddCategory());
-    $("#searchInput").addEventListener("input", (e) => {
-      state.query = e.target.value;
-      render();
+    const sortBtn = $("#btnSortToggle");
+    if (sortBtn) {
+      sortBtn.addEventListener("click", () => {
+        if (sortMode) saveSortOrder();
+        else setSortMode(true);
+      });
+    }
+    document.addEventListener("pointerdown", beginDrag);
+    $("#btnExport").addEventListener("click", () => exportConfig());
+    $("#btnImport").addEventListener("click", () => $("#importFile").click());
+    $("#importFile").addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      openImportConfirm(file);
     });
     $("#modalClose").addEventListener("click", () => closeModal(false));
     $("#modalBackdrop").addEventListener("click", (e) => {
@@ -1068,6 +1531,12 @@
     });
 
     document.addEventListener("click", (e) => {
+      if (sortMode && e.target.closest(".link-card")) {
+        // 排序模式下卡片只用于拖动，不跳转
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       const btn = e.target.closest("[data-act]");
       if (btn) {
         handleAction(btn.getAttribute("data-act"), btn.getAttribute("data-id"), e);
@@ -1076,7 +1545,15 @@
       if (!e.target.closest("#ctxMenu")) hideCtxMenu();
     });
 
+    document.addEventListener("dragstart", (e) => {
+      if (sortMode) e.preventDefault();
+    });
+
     document.addEventListener("contextmenu", (e) => {
+      if (sortMode) {
+        e.preventDefault();
+        return;
+      }
       if (openCtxAt(e.target, e.clientX, e.clientY)) {
         e.preventDefault();
         e.stopPropagation();
@@ -1089,36 +1566,27 @@
     window.addEventListener("resize", hideCtxMenu);
 
     document.addEventListener("keydown", (e) => {
-      const tag = (e.target && e.target.tagName) || "";
-      const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target.isContentEditable;
-      if (e.key === "/" && !typing) {
-        e.preventDefault();
-        $("#searchInput").focus();
-        $("#searchInput").select();
-      }
       if (e.key === "Escape") {
         hideCtxMenu();
-        if (!$("#modalBackdrop").classList.contains("hidden")) {
-          closeModal(false);
+        if (sortMode) {
+          setSortMode(false);
           return;
         }
-        if (state.query) {
-          state.query = "";
-          $("#searchInput").value = "";
-          render();
+        if (!$("#modalBackdrop").classList.contains("hidden")) {
+          closeModal(false);
         }
-        $("#searchInput").blur();
       }
     });
   }
 
   async function boot() {
     hydrateIcons(document);
-    state.meta.admin_protected = !!(window.__LAN_NAV__ && window.__LAN_NAV__.adminProtected);
+    syncSortButton();
     updateClock();
     setInterval(updateClock, 1000);
     applyTheme();
     applyCardSize(resolveCardSize());
+    applyIconShape(resolveIconShape());
     bindGlobal();
     try {
       await reload();

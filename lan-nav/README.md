@@ -1,23 +1,26 @@
 # lan-nav
 
-个人局域网导航页：视觉偏 Linear / Raycast，数据存本地 YAML，无需数据库与 Docker。适合家庭/实验室内网，经系统 Nginx 反向代理部署在 Debian。
+个人局域网导航页：视觉偏 Linear / Raycast，数据存本地 YAML，无需数据库。适合家庭/实验室内网；可用 Docker Compose、或 Debian 上的 systemd（可选 Nginx 反向代理）。
 
 ## 功能概览
 
 - 分类与链接的增删改、排序、折叠
 - 置顶区、实时搜索（`/` 聚焦，`Esc` 清空）
-- 深浅色主题、响应式布局
+- 深浅色主题、响应式布局、卡片大中小切换
+- 右键 / 长按菜单管理分类与链接
+- 页脚导入 / 导出 `navigation.yml` 配置文件
 - YAML 原子写入 + `.bak` 备份 + 损坏自动恢复
-- `ADMIN_TOKEN` 保护写入；未设置时页面会明确提示风险
 
 ## 安全说明
 
-这是**个人/家庭局域网**工具，默认无多用户账户。
+这是**个人/家庭局域网**工具，应用内**无账号、无 Token**；能访问站点即可读写数据。
 
-- 未设置 `ADMIN_TOKEN`：任何人可编辑，**仅建议可信局域网**。
-- 设置 `ADMIN_TOKEN` 后：进入编辑模式需输入 Token；Token 仅存浏览器 `sessionStorage`。
-- 所有写入 API 校验 `X-Admin-Token`；读取无需认证。
-- **若暴露公网**，必须额外采用 VPN、Nginx Basic Auth 或其他访问控制，不要只依赖本应用的 Token。
+- **内网使用**：建议仅绑定局域网或本机，配合防火墙限制访问来源。
+- **经 Nginx 部署**：`.env` 中 `HOST=127.0.0.1`、`DEBUG=false`，由 Nginx 对外提供服务。
+- **外网暴露**：请在 Nginx 层做访问控制，例如：
+  - 16 位随机 secret path（见 `deploy/nginx.conf.example`，访问时需带末尾 `/`）
+  - HTTPS
+  - VPN 或 Nginx Basic Auth
 
 ## 技术栈
 
@@ -33,8 +36,11 @@ lan-nav/
 ├── app/                 # FastAPI 应用、模板与静态资源
 ├── data/                # navigation.yml.example（正式数据运行时生成）
 ├── deploy/              # systemd 与 Nginx 示例
+├── docker/              # 容器入口脚本
 ├── scripts/             # 开发与 Debian 安装脚本
 ├── tests/
+├── Dockerfile
+├── compose.yml
 ├── .env.example
 ├── requirements.txt
 └── run.py
@@ -62,7 +68,7 @@ bash scripts/dev.sh
 默认地址：<http://127.0.0.1:8090>
 
 - `.env` 中 `DEBUG=true` 时启用 Uvicorn 热重载
-- 默认绑定 `127.0.0.1`，不会暴露到局域网
+- 局域网访问可将 `HOST` 设为 `0.0.0.0`
 
 测试：
 
@@ -74,12 +80,37 @@ pytest -q
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
-| `ADMIN_TOKEN` | 写入保护 Token，留空则不启用 | 空 |
 | `HOST` | 监听地址 | `127.0.0.1` |
 | `PORT` | 端口 | `8090` |
 | `DEBUG` | 热重载 | `false`（示例为 `true`） |
 | `TZ` | 时区 | `Asia/Shanghai` |
 | `DATA_FILE` | 数据文件路径 | `data/navigation.yml` |
+| `EXAMPLE_FILE` | 首次初始化用的示例 YAML | `data/navigation.yml.example` |
+
+## Docker 部署（推荐）
+
+Debian 安装 Docker 与 Compose 插件后，在项目目录执行：
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2
+sudo usermod -aG docker "$USER"
+# 重新登录后使 docker 组生效
+cd /opt/lan-nav   # 或你放置项目的目录
+docker compose up -d --build
+```
+
+- 本机：<http://127.0.0.1:8090>
+- 局域网：`http://<Debian内网IP>:8090`
+- 数据文件：项目目录下 `data/navigation.yml`（容器重启不丢失）
+
+常用命令：
+
+```bash
+docker compose logs -f
+docker compose restart
+docker compose down
+```
 
 ## Debian 12 部署
 
@@ -104,7 +135,6 @@ cp .env.example .env
 4. 编辑 `.env`：
 
 ```env
-ADMIN_TOKEN=请替换为高强度随机密码
 HOST=127.0.0.1
 PORT=8090
 DEBUG=false
@@ -127,7 +157,7 @@ sudo systemctl enable --now lan-nav
 sudo systemctl status lan-nav
 ```
 
-7. Nginx：
+7. Nginx（内网示例见 `deploy/nginx.conf.example`；外网建议启用 secret path）：
 
 ```bash
 sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/lan-nav
@@ -136,33 +166,24 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-在客户端 `/etc/hosts` 或局域网 DNS 添加：
-
-```text
-<Debian内网IP>  nav.lan
-```
-
-然后访问 <http://nav.lan>。
-
 ## 数据文件
 
 - 正式数据：`data/navigation.yml`（首次启动由示例/演示数据生成）
 - 备份：`data/navigation.yml.bak`
 - 示例：`data/navigation.yml.example`
 
-可用文本编辑器直接改 YAML；应用写入前会校验结构并原子替换。
-
 ## API 摘要
 
 统一响应：`{ "success": true, "data": {} }`
 
-| 方法 | 路径 | 认证 |
-|------|------|------|
-| GET | `/api/health` | 否 |
-| GET | `/api/auth/verify` | 写入保护开启时需要 |
-| GET | `/api/navigation` | 否 |
-| POST/PUT/DELETE | `/api/categories...` | 是 |
-| POST/PUT/DELETE | `/api/links...` | 是 |
+| 方法 | 路径 |
+|------|------|
+| GET | `/api/health` |
+| GET | `/api/navigation` |
+| GET | `/api/export` |
+| POST | `/api/import` |
+| POST/PUT/DELETE | `/api/categories...` |
+| POST/PUT/DELETE | `/api/links...` |
 
 ## 许可证
 

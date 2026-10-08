@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark" data-card-size="md">
+<html lang="zh-CN" data-theme="dark" data-card-size="md" data-icon-shape="rounded">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="dark light" />
   <title>局域网导航</title>
-  <link rel="stylesheet" href="/static/css/app.css" />
+  <link rel="stylesheet" href="static/css/app.css?v={{ css_ver }}" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2318181b'/%3E%3Cpath d='M8 18l8-10 8 10v6a2 2 0 01-2 2H10a2 2 0 01-2-2v-6z' fill='none' stroke='%2394a3b8' stroke-width='2'/%3E%3C/svg%3E" />
 </head>
 <body>
@@ -15,34 +15,13 @@
       <div class="brand-block">
         <p class="brand">lan-nav</p>
         <h1 class="site-title" id="siteTitle">局域网导航</h1>
-        <p class="site-subtitle" id="siteSubtitle"></p>
       </div>
       <div class="topbar-meta">
         <time class="datetime" id="clock" datetime=""></time>
-        <div class="size-switch" id="sizeSwitch" role="group" aria-label="卡片大小">
-          <button type="button" class="size-btn" data-size="sm" aria-pressed="false" title="小">小</button>
-          <button type="button" class="size-btn" data-size="md" aria-pressed="true" title="中（默认）">中</button>
-          <button type="button" class="size-btn" data-size="lg" aria-pressed="false" title="大">大</button>
-        </div>
-        <button type="button" class="icon-btn" id="themeToggle" aria-label="切换深浅色主题" title="切换主题"></button>
       </div>
     </header>
 
-    <div id="securityBanner" class="banner banner-warn hidden" role="status"></div>
-
     <div class="toolbar">
-      <label class="search-wrap" for="searchInput">
-        <span class="search-icon" data-icon="search" aria-hidden="true"></span>
-        <input
-          id="searchInput"
-          type="search"
-          placeholder="搜索标题、描述、URL、分类…"
-          autocomplete="off"
-          spellcheck="false"
-          enterkeyhint="search"
-        />
-        <kbd class="kbd">/</kbd>
-      </label>
       <nav class="anchor-nav" id="anchorNav" aria-label="分类导航"></nav>
     </div>
 
@@ -67,11 +46,51 @@
       <button type="button" class="btn btn-add-category" id="btnAddCategory">
         <span data-icon="plus"></span> 新增分类
       </button>
+      <button
+        type="button"
+        class="btn btn-sort-toggle"
+        id="btnSortToggle"
+        aria-pressed="false"
+        title="进入排序模式：拖动分组与卡片调整顺序"
+      >
+        <span class="sort-toggle-icon" data-icon="grip" aria-hidden="true"></span>
+        <span class="sort-toggle-label">编辑排序</span>
+      </button>
     </div>
 
     <footer class="footer">
-      <span>lan-nav · 本地 YAML 持久化</span>
-      <span id="footerHint"></span>
+      <div class="footer-prefs" aria-label="显示设置">
+        <div class="size-switch" id="sizeSwitch" role="group" aria-label="卡片大小">
+          <button type="button" class="size-btn" data-size="sm" aria-pressed="false" title="小">小</button>
+          <button type="button" class="size-btn" data-size="md" aria-pressed="true" title="中（默认）">中</button>
+          <button type="button" class="size-btn" data-size="lg" aria-pressed="false" title="大">大</button>
+        </div>
+        <div class="size-switch" id="iconShapeSwitch" role="group" aria-label="图标形状">
+          <button type="button" class="size-btn" data-shape="rounded" aria-pressed="true" title="圆角图标">圆角</button>
+          <button type="button" class="size-btn" data-shape="circle" aria-pressed="false" title="圆形图标">圆形</button>
+        </div>
+        <div class="size-switch" id="themeSwitch" role="group" aria-label="颜色主题">
+          <button type="button" class="size-btn" data-theme-choice="light" aria-pressed="false" title="浅色模式">浅色</button>
+          <button type="button" class="size-btn" data-theme-choice="dark" aria-pressed="true" title="深色模式">深色</button>
+        </div>
+      </div>
+      <div class="footer-meta">
+        <span>lan-nav · 本地 YAML 持久化</span>
+        <div class="footer-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="btnExport">
+            <span data-icon="download"></span> 导出配置
+          </button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnImport">
+            <span data-icon="upload"></span> 导入配置
+          </button>
+          <input
+            type="file"
+            id="importFile"
+            accept=".zip,.yml,.yaml,application/zip,application/x-yaml,text/yaml,text/plain"
+            hidden
+          />
+        </div>
+      </div>
     </footer>
   </div>
 
@@ -95,12 +114,7 @@
   <!-- Toast -->
   <div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
 
-  <script>
-    window.__LAN_NAV__ = {
-      adminProtected: {{ "true" if admin_protected else "false" }}
-    };
-  </script>
-  <script src="/static/js/icons.js"></script>
-  <script src="/static/js/app.js"></script>
+  <script src="static/js/icons.js?v={{ icons_ver }}"></script>
+  <script src="static/js/app.js?v={{ js_ver }}"></script>
 </body>
 </html>
