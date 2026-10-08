@@ -1,1 +1,14 @@
+.venv/
+.env
+data/navigation.yml
+data/navigation.yml.bak
+data/icon/
+__pycache__/
+.pytest_cache/
+tests/_tmp_api/
+tests/_tmp_storage/
+*.pyc
 .DS_Store
+*.egg-info/
+dist/
+build/
